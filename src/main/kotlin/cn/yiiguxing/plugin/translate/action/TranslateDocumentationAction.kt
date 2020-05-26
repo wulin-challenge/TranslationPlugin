@@ -165,13 +165,15 @@ class TranslateDocumentationAction : PsiElementTranslateAction() {
 
         private val LOGGER: Logger = Logger.getInstance(TranslateDocumentationAction::class.java)
 
-        fun getTranslatedDocumentation(documentation: String): String {
+        fun getTranslatedDocumentation(
+            documentation: String,
+            translator: Translator = TranslateService.translator
+        ): String {
             val document = Jsoup.parse(documentation)
             if (document.body().hasAttr(TRANSLATED_ATTR)) {
                 return documentation
             }
 
-            val translator = TranslateService.translator
             val translatedDocumentation = if (translator is GoogleTranslator) {
                 translator.getTranslatedDocumentation(document)
             } else {

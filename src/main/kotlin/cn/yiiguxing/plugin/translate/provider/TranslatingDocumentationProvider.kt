@@ -2,6 +2,8 @@ package cn.yiiguxing.plugin.translate.provider
 
 import cn.yiiguxing.plugin.translate.Settings
 import cn.yiiguxing.plugin.translate.action.TranslateDocumentationAction
+import cn.yiiguxing.plugin.translate.trans.Translator
+import cn.yiiguxing.plugin.translate.util.TranslateService
 import com.intellij.codeInsight.documentation.DocumentationManager
 import com.intellij.lang.documentation.DocumentationProviderEx
 import com.intellij.openapi.progress.ProgressManager
@@ -57,17 +59,18 @@ class TranslatingDocumentationProvider : DocumentationProviderEx() {
             if (text == null || text.isEmpty()) return null
 
             val lastTask = lastTranslation
+            val translator = TranslateService.translator
 
             val task =
-                if (lastTask != null && lastTask.text == text) lastTask
-                else TranslationTask(text)
+                if (lastTask != null && lastTask.translator.id == translator.id && lastTask.text == text) lastTask
+                else TranslationTask(text, translator)
 
             lastTranslation = task
 
             return task.nonBlockingGet()
         }
 
-        private data class TranslationTask(val text: String) {
+        private data class TranslationTask(val text: String, val translator: Translator) {
             private val totalTimeToWaitMs = 3_000
             private val timeToBlockMs = 100
 
@@ -75,7 +78,7 @@ class TranslatingDocumentationProvider : DocumentationProviderEx() {
 
             //execute on a different thread outside read action
             private val promise = runAsync {
-                TranslateDocumentationAction.getTranslatedDocumentation(text)
+                TranslateDocumentationAction.getTranslatedDocumentation(text, translator)
             }
 
             fun nonBlockingGet(): String? {
