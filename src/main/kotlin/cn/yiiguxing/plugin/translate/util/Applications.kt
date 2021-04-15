@@ -7,13 +7,13 @@ package cn.yiiguxing.plugin.translate.util
 
 import cn.yiiguxing.plugin.translate.AppStorage
 import cn.yiiguxing.plugin.translate.Settings
-import cn.yiiguxing.plugin.translate.service.TranslationUIManager
+import cn.yiiguxing.plugin.translate.service.CacheService
 import cn.yiiguxing.plugin.translate.trans.TranslateService
 import cn.yiiguxing.plugin.translate.tts.TextToSpeech
 import cn.yiiguxing.plugin.translate.wordbook.WordBookService
 import com.intellij.ide.IdeBundle
 import com.intellij.ide.plugins.IdeaPluginDescriptor
-import com.intellij.ide.plugins.PluginManager
+import com.intellij.ide.plugins.PluginManagerCore
 import com.intellij.notification.Notification
 import com.intellij.notification.Notifications
 import com.intellij.openapi.application.Application
@@ -38,7 +38,7 @@ object Plugin {
     @Suppress("SpellCheckingInspection")
     const val PLUGIN_ID = "cn.yiiguxing.plugin.translate"
 
-    val descriptor: IdeaPluginDescriptor = PluginManager.getPlugin(PluginId.getId(PLUGIN_ID))!!
+    val descriptor: IdeaPluginDescriptor = PluginManagerCore.getPlugin(PluginId.getId(PLUGIN_ID))!!
 
     val version: String by lazy { descriptor.version }
 
@@ -78,8 +78,8 @@ inline val Application: Application get() = ApplicationManager.getApplication()
 inline val AppStorage: AppStorage get() = AppStorage.instance
 inline val Settings: Settings get() = Settings.instance
 inline val TranslateService: TranslateService get() = TranslateService.instance
+inline val CacheService: CacheService get() = CacheService.instance
 inline val TextToSpeech: TextToSpeech get() = TextToSpeech.instance
-inline val TranslationUIManager: TranslationUIManager get() = TranslationUIManager.instance
 inline val WordBookService: WordBookService get() = WordBookService.instance
 
 

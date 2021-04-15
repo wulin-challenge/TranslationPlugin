@@ -2,6 +2,7 @@
 
 package cn.yiiguxing.plugin.translate.wordbook
 
+import cn.yiiguxing.plugin.translate.TRANSLATION_DIRECTORY
 import cn.yiiguxing.plugin.translate.message
 import cn.yiiguxing.plugin.translate.trans.Lang
 import cn.yiiguxing.plugin.translate.util.*
@@ -11,6 +12,7 @@ import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
+import com.intellij.openapi.util.SystemInfo
 import com.intellij.util.concurrency.AppExecutorUtil
 import com.intellij.util.io.HttpRequests
 import org.apache.commons.dbcp2.BasicDataSource
@@ -22,7 +24,6 @@ import java.io.RandomAccessFile
 import java.net.URLClassLoader
 import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.file.Paths
 import java.nio.file.StandardCopyOption
 import java.sql.ResultSet
 import java.sql.SQLException
@@ -41,7 +42,7 @@ class WordBookService {
 
     private val lockFile: RandomAccessFile
     private lateinit var queryRunner: QueryRunner
-    private val settingsPublisher: WordBookListener = Application.messageBus.syncPublisher(WordBookListener.TOPIC)
+    private val wordBookPublisher: WordBookListener = Application.messageBus.syncPublisher(WordBookListener.TOPIC)
 
     init {
         if (!Files.exists(TRANSLATION_DIRECTORY)) {
@@ -65,7 +66,7 @@ class WordBookService {
 
     private fun findDriverClassLoader(): ClassLoader? {
         val defaultClassLoader: ClassLoader? = javaClass.classLoader
-        if (defaultClassLoader?.canDriveService == true) {
+        if (defaultClassLoader?.canDriveService() == true) {
             return defaultClassLoader
         }
 
@@ -75,7 +76,7 @@ class WordBookService {
             }
 
             val urlClassLoader = URLClassLoader(arrayOf(DRIVER_JAR.toUri().toURL()), defaultClassLoader)
-            return@lock if (urlClassLoader.canDriveService) {
+            return@lock if (urlClassLoader.canDriveService(false)) {
                 urlClassLoader
             } else {
                 Files.delete(DRIVER_JAR)
@@ -90,7 +91,7 @@ class WordBookService {
         }
 
         ProgressManager.getInstance()
-            .run(object : Task.Backgroundable(null, "Downloading Word Book Driver...", true) {
+            .run(object : Task.Backgroundable(null, message("word.book.progress.downloading.driver"), true) {
                 override fun run(indicator: ProgressIndicator) = downloadDriverAndInitializeService(indicator)
                 override fun onFinished() = isDownloading.set(false)
             })
@@ -100,7 +101,7 @@ class WordBookService {
 
     private fun downloadDriverAndInitializeService(indicator: ProgressIndicator) {
         indicator.isIndeterminate = true
-        indicator.text = "Downloading..."
+        indicator.text = message("word.book.progress.downloading")
 
         try {
             AppExecutorUtil.getAppExecutorService().submit {
@@ -111,7 +112,7 @@ class WordBookService {
             throw e.cause?.takeIf { it is ProcessCanceledException } ?: e
         }
 
-        indicator.text = "Initializing Service..."
+        indicator.text = message("word.book.progress.initializing.service")
         findDriverClassLoader()?.let { initialize(it) }
     }
 
@@ -177,7 +178,7 @@ class WordBookService {
                 """.trimIndent()
             queryRunner.update(createIndexSQL)
             isInitialized = true
-            invokeOnDispatchThread { settingsPublisher.onInitialized(this@WordBookService) }
+            invokeOnDispatchThread { wordBookPublisher.onInitialized(this@WordBookService) }
         }
     }
 
@@ -201,7 +202,7 @@ class WordBookService {
      * Test if the specified [word] can be added to the wordbook
      */
     fun canAddToWordbook(word: String?): Boolean {
-        return isInitialized && word != null && word.isNotBlank() && word.length <= 60 && '\n' !in word
+        return word != null && word.isNotBlank() && word.length <= 60 && '\n' !in word
     }
 
     private fun checkIsInitialized() = check(isInitialized) { "Word book not initialized" }
@@ -238,7 +239,7 @@ class WordBookService {
                 )?.also {
                     item.id = it
                     invokeOnDispatchThread {
-                        settingsPublisher.onWordAdded(this@WordBookService, item)
+                        wordBookPublisher.onWordAdded(this@WordBookService, item)
                     }
                 }
             } catch (e: SQLException) {
@@ -247,7 +248,6 @@ class WordBookService {
                     if (notifyOnFailed) {
                         Notifications.showErrorNotification(
                             null,
-                            NOTIFICATION_DISPLAY_ID,
                             message("wordbook.notification.title"),
                             message("wordbook.notification.content.addFailed"),
                             e
@@ -276,7 +276,7 @@ class WordBookService {
         } == true
         if (updated) {
             invokeOnDispatchThread {
-                settingsPublisher.onWordUpdated(this@WordBookService, word)
+                wordBookPublisher.onWordUpdated(this@WordBookService, word)
             }
         }
 
@@ -304,7 +304,25 @@ class WordBookService {
         }?.also { removed ->
             if (removed) {
                 invokeOnDispatchThread {
-                    settingsPublisher.onWordRemoved(this@WordBookService, id)
+                    wordBookPublisher.onWordRemoved(this@WordBookService, id)
+                }
+            }
+        } == true
+    }
+
+    /**
+     * Removes words by the specified [ids].
+     */
+    fun removeWords(ids: List<Long>): Boolean {
+        checkIsInitialized()
+        return lock {
+            queryRunner.update("DELETE FROM wordbook WHERE $COLUMN_ID IN (${ids.joinToString()})") > 0
+        }?.also { removed ->
+            if (removed) {
+                invokeOnDispatchThread {
+                    for (id in ids) {
+                        wordBookPublisher.onWordRemoved(this@WordBookService, id)
+                    }
                 }
             }
         } == true
@@ -346,6 +364,20 @@ class WordBookService {
         }
     }
 
+    fun hasAnyWords(): Boolean {
+        checkIsInitialized()
+        return try {
+            queryRunner.query("SELECT COUNT(*) FROM wordbook", BooleanHandler)
+        } catch (e: SQLException) {
+            LOGGER.e(e.message ?: "", e)
+            false
+        }
+    }
+
+
+    private object BooleanHandler : ResultSetHandler<Boolean> {
+        override fun handle(rs: ResultSet): Boolean = rs.takeIf { it.next() }?.getBoolean(1) ?: false
+    }
 
     private object WordIdHandler : ResultSetHandler<Long?> {
         override fun handle(rs: ResultSet): Long? = rs.takeIf { it.next() }?.getLong(1)
@@ -359,14 +391,11 @@ class WordBookService {
 
 
     companion object {
-        private const val NOTIFICATION_DISPLAY_ID = "Wordbook"
-
-        private val USER_HOME_PATH = System.getProperty("user.home")
-        private val TRANSLATION_DIRECTORY = Paths.get(USER_HOME_PATH, ".translation")
+        private const val DRIVER_VERSION = "3.34.0"
 
         private const val DRIVER_FILE_URL =
-            "https://repo1.maven.org/maven2/org/xerial/sqlite-jdbc/3.28.0/sqlite-jdbc-3.28.0.jar"
-        private const val DRIVER_FILE_NAME = "driver.jar"
+            "https://repo1.maven.org/maven2/org/xerial/sqlite-jdbc/$DRIVER_VERSION/sqlite-jdbc-$DRIVER_VERSION.jar"
+        private const val DRIVER_FILE_NAME = "driver-v$DRIVER_VERSION.jar"
         private val DRIVER_JAR = TRANSLATION_DIRECTORY.resolve(DRIVER_FILE_NAME)
 
         private const val DATABASE_DRIVER = "org.sqlite.JDBC"
@@ -386,13 +415,19 @@ class WordBookService {
         val instance: WordBookService
             get() = ServiceManager.getService(WordBookService::class.java)
 
-        private val ClassLoader.canDriveService: Boolean
-            get() = try {
+        private fun ClassLoader.canDriveService(default: Boolean = true): Boolean {
+            // 内置的SQLite驱动不支持Mac M1
+            if (default && SystemInfo.isMac && /* Mac M1 */ SystemInfo.OS_ARCH.equals("aarch64", ignoreCase = true)) {
+                return false
+            }
+
+            return try {
                 Class.forName(DATABASE_DRIVER, false, this)
                 true
             } catch (e: Throwable) {
                 false
             }
+        }
 
         private fun ResultSet.toWordBookItem(): WordBookItem {
             return WordBookItem(

@@ -1,19 +1,19 @@
 <idea-plugin url="http://yiiguxing.github.io/TranslationPlugin">
     <id>cn.yiiguxing.plugin.translate</id>
     <name>Translation</name>
-    <version>2.x</version>
+    <version>3.x</version>
     <vendor email="yii.guxing@gmail.com" url="https://github.com/YiiGuxing">Yii.Guxing</vendor>
 
     <description><![CDATA[
-      <p><b>A translation plugin.</b></p>
+      <p><b>Translation plugin for IntelliJ based IDEs.</b></p>
       <br/>
       <p>
       <b>
-      <a href="http://yiiguxing.github.io/TranslationPlugin">Website</a> |
+      <a href="https://plugins.jetbrains.com/plugin/8579-translation">Website</a> |
       <a href="https://github.com/YiiGuxing/TranslationPlugin">GitHub</a> |
       <a href="https://github.com/YiiGuxing/TranslationPlugin/issues">Issues</a> |
-      <a href="http://yiiguxing.github.io/TranslationPlugin/start.html">Doc</a> |
-      <a href="http://yiiguxing.github.io/TranslationPlugin/support.html">Donate</a>
+      <a href="https://yiiguxing.gitee.io/translation-plugin/start.html">Doc</a> |
+      <a href="https://plugins.jetbrains.com/plugin/8579-translation/support-donate">Donate</a>
       </b>
       </p>
       <br/>
@@ -38,7 +38,7 @@
       <p>
       <b>Sponsors</b><br/><br/>
       <a title="Try CodeStream" href="https://sponsorlink.codestream.com/?utm_source=jbmarket&amp;utm_campaign=translation&amp;utm_medium=banner"><img src="https://alt-images.codestream.com/codestream_logo_translation.png" width="294" alt="CodeStream"></a><br/>
-      Request and perform code reviews from inside your IDE. Review any code, even if it's a work-in-progress that hasn't been committed yet, and use jump-to-definition, your favorite keybindings, and other IDE tools. <a title="Try CodeStream" href="https://sponsorlink.codestream.com/?utm_source=jbmarket&amp;utm_campaign=translation&amp;utm_medium=banner">Try it free</a>
+      Eliminate context switching and costly distractions. Create and merge PRs and perform code reviews from inside your IDE while using jump-to-definition, your keybindings, and other IDE favorites. <a title="Try CodeStream" href="https://sponsorlink.codestream.com/?utm_source=jbmarket&amp;utm_campaign=translation&amp;utm_medium=banner">Learn more</a>.
       </p>
       <br/>
       <p><a href="https://github.com/YiiGuxing/TranslationPlugin/issues">Send feedback</a></p>
@@ -47,18 +47,20 @@
     <!--suppress PluginXmlValidity -->
     <change-notes><![CDATA[
       <ul>
-        <li>增强了运行控制台的取词翻译</li>
-        <li>修复了一些Bug</li>
+        <li>文档上下文菜单添加了文档翻译操作</li>
+        <li>原文与译文文本区域滚动同步</li>
+        <li>用户体验优化调整</li>
+        <li>修复了一些问题</li>
       </ul>
       <a href="https://github.com/YiiGuxing/TranslationPlugin/blob/master/CHANGELOG.md"><b>Full Changelog History</b></a>
     ]]></change-notes>
 
     <!-- please see http://www.jetbrains.org/intellij/sdk/docs/basics/getting_started/build_number_ranges.html for description -->
-    <idea-version since-build="193.2252"/>
+    <idea-version since-build="203.5981.155"/>
 
     <!-- please see http://www.jetbrains.org/intellij/sdk/docs/basics/getting_started/plugin_compatibility.html
          on how to target different products -->
-    <depends>com.intellij.modules.lang</depends>
+    <depends optional="true" config-file="action-group.xml">com.intellij.modules.lang</depends>
     <!-- Rider模块不可用 -->
     <!--<depends optional="true" config-file="csharp-doc.xml">com.intellij.modules.rider</depends>-->
     <depends optional="true" config-file="oc-doc.xml">com.intellij.modules.cidr.lang</depends>
@@ -86,7 +88,13 @@
     <depends optional="true" config-file="yaml-doc.xml">org.jetbrains.plugins.yaml</depends>
 
     <extensionPoints>
-        <extensionPoint name="docElementProvider" beanClass="com.intellij.lang.LanguageExtensionPoint">
+        <extensionPoint name="ignoredDocumentationElementsProvider"
+                        beanClass="com.intellij.lang.LanguageExtensionPoint">
+            <with attribute="implementationClass"
+                  implements="cn.yiiguxing.plugin.translate.provider.IgnoredDocumentationElementsProvider"/>
+        </extensionPoint>
+        <extensionPoint name="docElementProvider"
+                        beanClass="com.intellij.lang.LanguageExtensionPoint">
             <with attribute="implementationClass"
                   implements="cn.yiiguxing.plugin.translate.provider.DocumentationElementProvider"/>
         </extensionPoint>
@@ -97,99 +105,94 @@
         <applicationService serviceImplementation="cn.yiiguxing.plugin.translate.trans.TranslateService"/>
         <applicationService serviceImplementation="cn.yiiguxing.plugin.translate.tts.TextToSpeech"/>
         <applicationService serviceImplementation="cn.yiiguxing.plugin.translate.AppStorage"/>
-        <applicationService serviceImplementation="cn.yiiguxing.plugin.translate.service.TranslationUIManager"/>
         <applicationService serviceImplementation="cn.yiiguxing.plugin.translate.wordbook.WordBookService"/>
         <applicationService serviceImplementation="cn.yiiguxing.plugin.translate.wordbook.WordBookView"/>
 
-        <applicationConfigurable instance="cn.yiiguxing.plugin.translate.ui.settings.OptionsConfigurable"/>
+        <projectService serviceImplementation="cn.yiiguxing.plugin.translate.service.TranslationUIManager"/>
+        <applicationService serviceImplementation="cn.yiiguxing.plugin.translate.service.TranslationUIManager"/>
 
-        <statusBarWidgetProvider implementation="cn.yiiguxing.plugin.translate.provider.TranslatorWidgetProvider"/>
+        <applicationConfigurable groupId="tools"
+                                 instance="cn.yiiguxing.plugin.translate.ui.settings.OptionsConfigurable"/>
+
+        <statusBarWidgetFactory implementation="cn.yiiguxing.plugin.translate.ui.TranslatorWidgetFactory"/>
         <toolWindow id="Word Book"
                     icon="Icons.Wordbook"
                     anchor="right"
                     secondary="true"
+                    doNotActivateOnStart="true"
                     factoryClass="cn.yiiguxing.plugin.translate.wordbook.WordBookToolWindowFactory"/>
 
-        <postStartupActivity implementation="cn.yiiguxing.plugin.translate.activity.TranslationStartupActivity"/>
         <postStartupActivity implementation="cn.yiiguxing.plugin.translate.update.UpdateManager"/>
         <postStartupActivity implementation="cn.yiiguxing.plugin.translate.activity.WordOfTheDayStartupActivity"/>
-        <actionPromoter implementation="cn.yiiguxing.plugin.translate.action.ToggleDocTranslationPromoter"/>
+        <actionPromoter implementation="cn.yiiguxing.plugin.translate.action.TranslationPromoter"/>
+        <documentationActionProvider
+                implementation="cn.yiiguxing.plugin.translate.documentation.TranslateDocumentationActionProvider"/>
+
+        <notificationGroup id="Translation Plugin" displayType="BALLOON" isLogByDefault="true"/>
+        <notificationGroup id="Word Book Import/Export" displayType="BALLOON" isLogByDefault="true"/>
+        <notificationGroup id="Translation Plugin Updates" displayType="STICKY_BALLOON" isLogByDefault="false"/>
     </extensions>
 
     <actions>
         <action id="$ShowTranslationDialogAction"
-                icon="Icons.Translate"
-                class="cn.yiiguxing.plugin.translate.action.ShowTranslationDialogAction"
-                text="Show Translation Dialog..."
-                description="Open translation dialog">
+                icon="Icons.Translation"
+                class="cn.yiiguxing.plugin.translate.action.ShowTranslationDialogAction">
             <keyboard-shortcut keymap="$default" first-keystroke="control shift O"/>
             <keyboard-shortcut keymap="Mac OS X" first-keystroke="control meta I" replace-all="true"/>
             <keyboard-shortcut keymap="Mac OS X 10.5+" first-keystroke="control meta I" replace-all="true"/>
         </action>
-        <action id="$ShowInstantTranslationDialogAction"
-                icon="Icons.Translate2"
-                class="cn.yiiguxing.plugin.translate.action.ShowInstantTranslationDialogAction"
-                text="Show Instant Translation Dialog..."
-                description="Open instant translation dialog"/>
+
         <action id="$ChooseTranslatorAction"
-                class="cn.yiiguxing.plugin.translate.action.ChooseTranslatorAction"
-                text="Choose Translator"
-                description="Choose translator">
+                class="cn.yiiguxing.plugin.translate.action.ChooseTranslatorAction">
             <keyboard-shortcut keymap="$default" first-keystroke="control shift S"/>
             <keyboard-shortcut keymap="Mac OS X" first-keystroke="control meta Y" replace-all="true"/>
             <keyboard-shortcut keymap="Mac OS X 10.5+" first-keystroke="control meta Y" replace-all="true"/>
         </action>
         <action id="$EditorTranslateAction" class="cn.yiiguxing.plugin.translate.action.EditorTranslateAction"
-                icon="Icons.Translate"
-                text="Translate"
-                description="Translate">
+                icon="Icons.Translation">
             <keyboard-shortcut keymap="$default" first-keystroke="control shift Y"/>
             <keyboard-shortcut keymap="Mac OS X" first-keystroke="control meta U" replace-all="true"/>
             <keyboard-shortcut keymap="Mac OS X 10.5+" first-keystroke="control meta U" replace-all="true"/>
         </action>
         <action id="$TranslateAndReplaceAction" class="cn.yiiguxing.plugin.translate.action.TranslateAndReplaceAction"
-                text="Translate and Replace..." description="Translate and Replace">
+                icon="Icons.TranslationReplace">
             <keyboard-shortcut keymap="$default" first-keystroke="control shift X"/>
             <keyboard-shortcut keymap="Mac OS X" first-keystroke="control meta O"/>
             <keyboard-shortcut keymap="Mac OS X 10.5+" first-keystroke="control meta O" replace-all="true"/>
         </action>
         <action id="$TranslateDocumentationAction"
-                icon="AllIcons.Toolwindows.Documentation"
-                class="cn.yiiguxing.plugin.translate.action.TranslateDocumentationAction"
-                text="Translate Documentation" description="Translate documentation"/>
+                icon="Icons.Documentation"
+                class="cn.yiiguxing.plugin.translate.action.TranslateDocumentationAction"/>
         <action id="$InclusiveTranslateAction"
-                class="cn.yiiguxing.plugin.translate.action.InclusiveTranslateAction"
-                text="Translate(Inclusive)"/>
+                class="cn.yiiguxing.plugin.translate.action.InclusiveTranslateAction"/>
         <action id="$ExclusiveTranslateAction"
-                class="cn.yiiguxing.plugin.translate.action.ExclusiveTranslateAction"
-                text="Translate(Exclusive)"/>
+                class="cn.yiiguxing.plugin.translate.action.ExclusiveTranslateAction"/>
         <action id="$TranslateQuickDocAction"
-                class="cn.yiiguxing.plugin.translate.action.TranslateQuickDocAction"
-                text="Translate Quick Document"
+                class="cn.yiiguxing.plugin.translate.action.TranslateQuickDocSelectionAction"
                 use-shortcut-of="$EditorTranslateAction"/>
         <action id="$TranslateTextComponent"
                 class="cn.yiiguxing.plugin.translate.action.TranslateTextComponentAction"
-                text="Translate Text Component"
                 use-shortcut-of="$EditorTranslateAction"/>
         <action id="$TerminalTranslationAction"
                 class="cn.yiiguxing.plugin.translate.action.TerminalTranslationAction"
-                icon="Icons.Translate"
-                text="Translate Text in Terminal"
+                icon="Icons.Translation"
                 use-shortcut-of="$EditorTranslateAction"/>
         <action id="$ShowWordOfTheDayAction"
                 icon="AllIcons.Actions.IntentionBulb"
-                class="cn.yiiguxing.plugin.translate.action.ShowWordOfTheDayAction"
-                text="Word of the Day"/>
+                class="cn.yiiguxing.plugin.translate.action.ShowWordOfTheDayAction"/>
 
         <action id="$WhatsNewInTranslationAction"
-                text="What's New in Translation"
                 class="cn.yiiguxing.plugin.translate.action.WhatsNewAction">
             <add-to-group group-id="HelpMenu" anchor="after" relative-to-action="WhatsNewAction"/>
         </action>
 
-        <action id="ToggleQuickDocTranslationAction"
-                class="cn.yiiguxing.plugin.translate.action.ToggleQuickDocTranslationAction"
-                text="Toggle Quick Documentation Translation"
+        <action id="ToggleQuickDocTranslationActionWithShortcut"
+                class="cn.yiiguxing.plugin.translate.action.ToggleQuickDocTranslationActionWithShortcut"
+                use-shortcut-of="$EditorTranslateAction">
+        </action>
+
+        <action id="PinBalloonAction"
+                class="cn.yiiguxing.plugin.translate.action.PinBalloonAction"
                 use-shortcut-of="$EditorTranslateAction">
         </action>
 
@@ -208,22 +211,12 @@
         <group id="TranslationToolBar" text="Translation Toolbar Actions">
             <separator/>
             <reference ref="$ShowTranslationDialogAction"/>
-            <reference ref="$ShowInstantTranslationDialogAction"/>
             <separator/>
 
             <add-to-group group-id="MainToolBar" anchor="last"/>
         </group>
-        <group id="TranslationNavBarToolBar" text="Translation Navigation Bar Actions">
-            <separator/>
-            <reference ref="$ShowTranslationDialogAction"/>
-            <separator/>
-
-            <!--suppress PluginXmlValidity -->
-            <add-to-group group-id="NavBarToolBar" relative-to-action="RunAnything" anchor="before"/>
-        </group>
         <group id="TranslationGroup.Expanded" popup="true" text="Expanded">
             <reference ref="$ShowTranslationDialogAction"/>
-            <reference ref="$ShowInstantTranslationDialogAction"/>
             <reference ref="$InclusiveTranslateAction"/>
             <reference ref="$ExclusiveTranslateAction"/>
         </group>

@@ -1,7 +1,12 @@
 package cn.yiiguxing.plugin.translate.action
 
+import cn.yiiguxing.plugin.translate.adaptedMessage
 import cn.yiiguxing.plugin.translate.message
-import cn.yiiguxing.plugin.translate.util.*
+import cn.yiiguxing.plugin.translate.service.TranslationUIManager
+import cn.yiiguxing.plugin.translate.util.Settings
+import cn.yiiguxing.plugin.translate.util.getSelectionFromCurrentCaret
+import cn.yiiguxing.plugin.translate.util.isNullOrBlank
+import cn.yiiguxing.plugin.translate.util.processBeforeTranslate
 import com.intellij.codeInsight.hint.HintManagerImpl
 import com.intellij.openapi.actionSystem.DataContext
 import com.intellij.openapi.editor.Caret
@@ -16,6 +21,7 @@ class TranslateTextComponentAction : TextComponentEditorAction(Handler()), HintM
 
     init {
         isEnabledInModalContext = true
+        templatePresentation.text = adaptedMessage("action.TranslateTextComponent.text")
         templatePresentation.description = message("action.description.textComponent")
     }
 

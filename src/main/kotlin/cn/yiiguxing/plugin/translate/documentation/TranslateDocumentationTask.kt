@@ -1,11 +1,18 @@
 package cn.yiiguxing.plugin.translate.documentation
 
 import cn.yiiguxing.plugin.translate.action.TranslateDocumentationAction
+import cn.yiiguxing.plugin.translate.trans.Translator
+import cn.yiiguxing.plugin.translate.util.TranslateService
+import com.intellij.lang.Language
 import com.intellij.openapi.progress.ProgressManager
 import org.jetbrains.concurrency.runAsync
 import java.util.concurrent.TimeoutException
 
-class TranslateDocumentationTask(val text: String) {
+class TranslateDocumentationTask(
+    val text: String,
+    val language: Language? = null,
+    val translator: Translator = TranslateService.translator
+) {
 
     private val totalTimeToWaitMs = 3_000
     private val timeToBlockMs = 100
@@ -14,7 +21,7 @@ class TranslateDocumentationTask(val text: String) {
 
     //execute on a different thread outside read action
     private val promise = runAsync {
-        getTranslatedDocumentation(text)
+        translator.getTranslatedDocumentation(text, language)
     }
 
     fun onSuccess(callback: (String) -> Unit) {
@@ -31,7 +38,7 @@ class TranslateDocumentationTask(val text: String) {
             } catch (t: TimeoutException) {
                 //ignore
             } catch (e: Throwable) {
-                TranslateDocumentationAction.logAndShowWarning(e, null)
+                TranslateDocumentationAction.showWarning(e, null)
                 return null
             }
         }

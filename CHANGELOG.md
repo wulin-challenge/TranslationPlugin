@@ -1,5 +1,46 @@
 # Change Log
 
+## [v3.1](https://github.com/YiiGuxing/TranslationPlugin/tree/v3.1) (2021-04-13)
+
+- 文档上下文菜单添加了文档翻译操作（IDE 2020.3+）
+- 原文与译文文本区域滚动同步
+- 用户体验优化调整
+- 修复了一些问题
+
+## [v3.0.3](https://github.com/YiiGuxing/TranslationPlugin/tree/v3.0.3) (2021-03-24)
+
+- 使用在线发行说明
+- 修复了谷歌文档翻译解析错误的问题
+
+## [v3.0.2](https://github.com/YiiGuxing/TranslationPlugin/tree/v3.0.2) (2021-03-19)
+
+- 修复了谷歌文档翻译解析错误的问题
+- 修复了MacOS(M1)中单词本驱动的一个错误
+- 修复了Android Studio中点击有道、百度翻译账号申请链接时崩溃的问题
+- 其他一些BUG的修复
+
+## [v3.0.1](https://github.com/YiiGuxing/TranslationPlugin/tree/v3.0.1) (2020-12-31)
+
+- 恢复了右键文档翻译功能
+- 按ESC键时关闭翻译窗口
+- 优化了目标语言的选择逻辑
+- 修复了翻译窗口导致CPU高占用率的问题
+
+## [v3.0](https://github.com/YiiGuxing/TranslationPlugin/tree/v3.0) (2020-12-05)
+
+- 新的Logo
+- 新的用户界面
+- 添加磁盘缓存支持
+- 在翻译对话框、翻译弹出窗口界面上添加了一些操作快捷键
+- 单词本添加多选操作的支持
+- 快速文档翻译内容长度限制
+- 修复了一些Bug
+
+## [v2.9.2](https://github.com/YiiGuxing/TranslationPlugin/tree/v2.9.2) (2020-08-15)
+
+- 添加快速切换自动文档翻译的快捷键
+- 修复了一些Bug
+
 ## [v2.9.1](https://github.com/YiiGuxing/TranslationPlugin/tree/v2.9.1) (2020-05-18)
 
 - 增强了运行控制台的取词翻译

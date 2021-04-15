@@ -19,7 +19,7 @@ import kotlin.properties.Delegates
 /**
  * 应用数据存储
  */
-@State(name = "AppStorage", storages = [(Storage("yiiguxing.translation.xml"))])
+@State(name = "AppStorage", storages = [(Storage(STORAGE_NAME))])
 class AppStorage : PersistentStateComponent<AppStorage> {
 
     @CollectionBean
@@ -30,9 +30,14 @@ class AppStorage : PersistentStateComponent<AppStorage> {
 
     val lastLanguages: LanguagePair = LanguagePair()
 
-    val lastInstantLanguages: LanguagePair = LanguagePair()
-
     var lastReplacementTargetLanguage: Lang? = null
+
+    var pinNewTranslationDialog: Boolean = false
+    var newTranslationDialogX: Int? = null
+    var newTranslationDialogY: Int? = null
+    var newTranslationDialogWidth: Int = 600
+    var newTranslationDialogHeight: Int = 250
+    var newTranslationDialogCollapseDictViewer = true
 
     /**
      * 最大历史记录长度

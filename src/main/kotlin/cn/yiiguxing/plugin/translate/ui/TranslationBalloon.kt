@@ -1,12 +1,18 @@
 package cn.yiiguxing.plugin.translate.ui
 
 import cn.yiiguxing.plugin.translate.*
+import cn.yiiguxing.plugin.translate.service.TranslationUIManager
 import cn.yiiguxing.plugin.translate.trans.Lang
 import cn.yiiguxing.plugin.translate.trans.Translation
+import cn.yiiguxing.plugin.translate.ui.balloon.BalloonImpl
 import cn.yiiguxing.plugin.translate.ui.balloon.BalloonPopupBuilder
 import cn.yiiguxing.plugin.translate.ui.settings.OptionsConfigurable
-import cn.yiiguxing.plugin.translate.util.*
-import com.intellij.openapi.Disposable
+import cn.yiiguxing.plugin.translate.ui.settings.TranslationEngine
+import cn.yiiguxing.plugin.translate.util.AppStorage
+import cn.yiiguxing.plugin.translate.util.Settings
+import cn.yiiguxing.plugin.translate.util.copyToClipboard
+import cn.yiiguxing.plugin.translate.util.invokeLater
+import com.intellij.icons.AllIcons
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.ScrollType
@@ -28,7 +34,10 @@ import java.awt.Component.TOP_ALIGNMENT
 import java.awt.Toolkit
 import java.awt.event.AWTEventListener
 import java.awt.event.MouseEvent
-import javax.swing.*
+import javax.swing.JComponent
+import javax.swing.JTextPane
+import javax.swing.MenuElement
+import javax.swing.SwingUtilities
 import javax.swing.event.HyperlinkEvent
 
 class TranslationBalloon(
@@ -43,12 +52,10 @@ class TranslationBalloon(
     private val contentPanel = JBPanel<JBPanel<*>>(layout)
     private val errorPanel = NonOpaquePanel(FrameLayout())
     private val errorPane = JTextPane()
-    private val processPane = ProcessComponent("Querying...", JBUI.insets(INSETS))
+    private val processPane = ProcessComponent(JBUI.insets(INSETS, INSETS * 2))
     private val translationContentPane = NonOpaquePanel(FrameLayout())
     private val translationPane = BalloonTranslationPane(project, Settings, getMaxWidth(project))
-    private val pinButton = ActionLink(icon = Icons.Pin) {
-        showOnTranslationDialog(text, translationPane.sourceLanguage, translationPane.targetLanguage)
-    }
+    private val pinButton = ActionLink(icon = AllIcons.General.Pin_tab) { pin() }
     private val copyErrorLink = ActionLink(icon = Icons.CopyToClipboard) {
         lastError?.copyToClipboard()
         hide()
@@ -82,10 +89,10 @@ class TranslationBalloon(
         balloon = createBalloon(contentPanel)
         initActions()
 
-        project?.let { Disposer.register(it, balloon) }
+        Disposer.register(TranslationUIManager.disposable(project), balloon)
         // 如果使用`Disposer.register(balloon, this)`的话，
         // `TranslationBalloon`在外部以子`Disposable`再次注册时将会使之无效。
-        Disposer.register(balloon, Disposable { Disposer.dispose(this) })
+        Disposer.register(balloon, { Disposer.dispose(this) })
         Disposer.register(this, processPane)
         Disposer.register(this, translationPane)
 
@@ -112,6 +119,7 @@ class TranslationBalloon(
 
         translationContentPane.apply {
             add(pinButton.apply {
+                border = JBEmptyBorder(5, 0, 0, 0)
                 isVisible = false
                 alignmentX = RIGHT_ALIGNMENT
                 alignmentY = TOP_ALIGNMENT
@@ -155,6 +163,9 @@ class TranslationBalloon(
                     if (HTML_DESCRIPTION_SETTINGS == hyperlinkEvent.description) {
                         this@TranslationBalloon.hide()
                         OptionsConfigurable.showSettingsDialog(project)
+                    } else if (HTML_DESCRIPTION_TRANSLATOR_CONFIGURATION == hyperlinkEvent.description) {
+                        this@TranslationBalloon.hide()
+                        presenter.translator.checkConfiguration()
                     }
                 }
             })
@@ -163,7 +174,7 @@ class TranslationBalloon(
         copyErrorLink.apply {
             isVisible = false
             border = JBEmptyBorder(0, 0, 0, 2)
-            toolTipText = "Copy error info to clipboard."
+            toolTipText = message("copy.error.to.clipboard.tooltip")
             alignmentX = RIGHT_ALIGNMENT
             alignmentY = TOP_ALIGNMENT
         }
@@ -201,8 +212,6 @@ class TranslationBalloon(
 
         balloon.hide()
         Toolkit.getDefaultToolkit().removeAWTEventListener(eventListener)
-
-        println("Balloon disposed.")
     }
 
     fun hide() {
@@ -214,10 +223,16 @@ class TranslationBalloon(
     fun show(tracker: PositionTracker<Balloon>, position: Balloon.Position) {
         check(!disposed) { "Balloon has been disposed." }
 
+        if (!presenter.translator.checkConfiguration()) {
+            hide()
+            return
+        }
+
         if (!isShowing) {
             isShowing = true
 
             editor.scrollingModel.scrollToCaret(ScrollType.MAKE_VISIBLE)
+            Disposer.register(this, tracker)
             balloon.show(tracker, position)
 
             val targetLang = presenter.getTargetLang(text)
@@ -236,15 +251,24 @@ class TranslationBalloon(
         }
     }
 
-    private fun showOnTranslationDialog(text: String, srcLang: Lang? = null, targetLang: Lang? = null) {
+    fun pin() {
+        val readyTranslation = translationPane.translation ?: return
         hide()
-        val dialog = TranslationUIManager.showDialog(editor.project)
-        if (!text.isNullOrBlank()) {
-            dialog.translate(text, srcLang, targetLang)
-        }
+
+        AppStorage.pinNewTranslationDialog = true
+        TranslationUIManager.showDialog(editor.project)
+            .applyTranslation(readyTranslation)
     }
 
-    override fun onTranslatorChanged(settings: Settings, translatorId: String) {
+    private fun showOnTranslationDialog(text: String, srcLang: Lang, targetLang: Lang) {
+        hide()
+
+        AppStorage.pinNewTranslationDialog = true
+        TranslationUIManager.showDialog(editor.project)
+            .translate(text, srcLang, targetLang)
+    }
+
+    override fun onTranslatorChanged(settings: Settings, translationEngine: TranslationEngine) {
         hide()
     }
 
@@ -280,18 +304,24 @@ class TranslationBalloon(
         private const val CARD_TRANSLATION = "translation"
 
         private fun createBalloon(content: JComponent): Balloon = BalloonPopupBuilder(content)
-            .setDialogMode(true)
-            .setFillColor(UIManager.getColor("Panel.background"))
-            .setBorderColor(Color.darkGray.toAlpha(75))
             .setShadow(true)
-            .setHideOnClickOutside(true)
+            .setDialogMode(true)
+            .setRequestFocus(true)
             .setHideOnAction(true)
-            .setHideOnFrameResize(true)
             .setHideOnCloseClick(true)
-            .setHideOnKeyOutside(true)
+            .setHideOnKeyOutside(false)
+            .setHideOnFrameResize(true)
+            .setHideOnClickOutside(true)
             .setBlockClicksThroughBalloon(true)
             .setCloseButtonEnabled(false)
+            .setAnimationCycle(200)
+            .setBorderColor(Color.darkGray.toAlpha(35))
+            .setFillColor(JBUI.CurrentTheme.CustomFrameDecorations.paneBackground())
             .createBalloon()
+            .apply {
+                this as BalloonImpl
+                setHideListener { hide() }
+            }
 
         private fun getMaxWidth(project: Project?): Int {
             val maxWidth = (WindowManager.getInstance().getFrame(project)?.width ?: 0) * 0.45

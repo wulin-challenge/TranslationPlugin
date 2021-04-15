@@ -1,9 +1,15 @@
 package cn.yiiguxing.plugin.translate.documentation
 
+import cn.yiiguxing.plugin.translate.message
+import cn.yiiguxing.plugin.translate.provider.IgnoredDocumentationElementsProvider
 import cn.yiiguxing.plugin.translate.trans.GoogleTranslator
 import cn.yiiguxing.plugin.translate.trans.Lang
 import cn.yiiguxing.plugin.translate.trans.Translator
-import cn.yiiguxing.plugin.translate.util.TranslateService
+import com.intellij.codeInsight.documentation.DocumentationComponent
+import com.intellij.lang.Language
+import com.intellij.ui.ColorUtil
+import com.intellij.ui.scale.JBUIScale
+import com.intellij.util.ui.JBUI
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
@@ -27,25 +33,56 @@ private const val HTML_HEAD_REPLACEMENT = "<${'$'}{tag} class='${'$'}{class}'>"
 
 private val HTML_KIT = HTMLEditorKit()
 
-fun getTranslatedDocumentation(documentation: String): String {
-    val document = Jsoup.parse(documentation)
+private class ContentLengthLimitException : Exception()
+
+fun Translator.getTranslatedDocumentation(documentation: String, language: Language?): String {
+    val document: Document = Jsoup.parse(documentation)
     if (document.body().hasAttr(TRANSLATED_ATTR)) {
         return documentation
     }
 
-    val translator = TranslateService.translator
-    val translatedDocumentation = if (translator is GoogleTranslator) {
-        translator.getTranslatedDocumentation(document)
-    } else {
-        translator.getTranslatedDocumentation(document)
-    }
+    val translatedDocumentation =
+        try {
+            if (this is GoogleTranslator) {
+                getTranslatedDocumentation(document, language)
+            } else {
+                getTranslatedDocumentation(document)
+            }
+        } catch (e: ContentLengthLimitException) {
+            document.addLimitHint()
+        }
 
     translatedDocumentation.body().attributes().put(TRANSLATED_ATTR, null)
 
     return translatedDocumentation.outerHtml().fixHtml()
 }
 
-private fun GoogleTranslator.getTranslatedDocumentation(document: Document): Document {
+private fun Document.addLimitHint(): Document {
+    val hintColor = ColorUtil.toHex(JBUI.CurrentTheme.Label.disabledForeground())
+    body().selectFirst(CSS_QUERY_CONTENT).insertChildren(
+        0,
+        Element("div")
+            .attr(
+                "style",
+                "color: $hintColor;" +
+                        "margin-bottom: ${JBUIScale.scale(4)}px;" +
+                        "padding: ${JBUIScale.scale(1)}px ${JBUIScale.scale(6)}px;" +
+                        "border-left: ${JBUIScale.scale(3)}px $hintColor solid;"
+            )
+            .text(message("translate.documentation.limitHint"))
+    )
+    return this
+}
+
+/**
+ * 修复HTML格式。[DocumentationComponent]识别不了`attr="val"`的属性表达形式，只识别`attr='val'`的表达形式，导致样式显示异常。
+ */
+private fun String.fixHtml(): String = replace(
+    HTML_HEAD_REGEX,
+    HTML_HEAD_REPLACEMENT
+)
+
+private fun GoogleTranslator.getTranslatedDocumentation(document: Document, language: Language?): Document {
     val body = document.body()
     val definition = body.selectFirst(CSS_QUERY_DEFINITION)?.apply { remove() }
 
@@ -60,11 +97,14 @@ private fun GoogleTranslator.getTranslatedDocumentation(document: Document): Doc
         element.replaceWith(Element(TAG_PRE).attr("id", index.toString()))
     }
 
+    val ignoredElementsProvider = language?.let { IgnoredDocumentationElementsProvider.forLanguage(it) }
+    val ignoredElements = ignoredElementsProvider?.ignoreElements(body)
+
     // 翻译内容会带有原文与译文，分号包在 `i` 标签和 `b` 标签内，因此替换掉这两个标签以免影响到翻译后的处理。
-    val content = body.html().replaceTag(TAG_B, TAG_STRONG).replaceTag(
-        TAG_I,
-        TAG_EM
-    )
+    // 无需检查内容长度，因为谷歌翻好像没有限制
+    val content = body.html()
+        .replaceTag(TAG_B, TAG_STRONG)
+        .replaceTag(TAG_I, TAG_EM)
     val translation =
         if (content.isBlank()) ""
         else translateDocumentation(content, Lang.AUTO, primaryLanguage).translation ?: ""
@@ -78,18 +118,12 @@ private fun GoogleTranslator.getTranslatedDocumentation(document: Document): Doc
     preElements.forEachIndexed { index, element ->
         body.selectFirst("""${TAG_PRE}[id="$index"]""").replaceWith(element)
     }
+    ignoredElements?.let { ignoredElementsProvider.restoreIgnoredElements(body, it) }
+
     definition?.let { body.prependChild(it) }
 
     return document
 }
-
-/**
- * 修复HTML格式。[DocumentationComponent]识别不了`attr="val"`的属性表达形式，只识别`attr='val'`的表达形式，导致样式显示异常。
- */
-private fun String.fixHtml(): String = replace(
-    HTML_HEAD_REGEX,
-    HTML_HEAD_REPLACEMENT
-)
 
 private fun String.replaceTag(targetTag: String, replacementTag: String): String {
     return replace(Regex("<(?<pre>/??)$targetTag(?<pos>( .+?)*?)>"), "<${'$'}{pre}$replacementTag${'$'}{pos}>")
@@ -97,12 +131,22 @@ private fun String.replaceTag(targetTag: String, replacementTag: String): String
 
 private fun Element.isEmptyParagraph(): Boolean = "p".equals(tagName(), true) && html().isBlank()
 
+private fun Translator.checkContentLengthLimit(content: String): String {
+    if (contentLengthLimit > 0 && content.length > contentLengthLimit) throw ContentLengthLimitException()
+    return content
+}
+
 private fun Translator.getTranslatedDocumentation(document: Document): Document {
     val body = document.body()
     val definition = body.selectFirst(CSS_QUERY_DEFINITION)?.apply { remove() }
 
     val htmlDocument = HTMLDocument().also { HTML_KIT.read(StringReader(body.html()), it, 0) }
-    val formatted = htmlDocument.getText(0, htmlDocument.length).trim()
+    val formatted = try {
+        checkContentLengthLimit(htmlDocument.getText(0, htmlDocument.length).trim())
+    } catch (e: ContentLengthLimitException) {
+        definition?.let { body.insertChildren(0, it) }
+        throw e
+    }
     val translation =
         if (formatted.isEmpty()) ""
         else translateDocumentation(formatted, Lang.AUTO, primaryLanguage).translation ?: ""

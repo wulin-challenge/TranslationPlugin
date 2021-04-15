@@ -1,5 +1,7 @@
 package cn.yiiguxing.plugin.translate.action
 
+import cn.yiiguxing.plugin.translate.adaptedMessage
+import cn.yiiguxing.plugin.translate.message
 import cn.yiiguxing.plugin.translate.util.TranslateService
 import com.intellij.openapi.actionSystem.*
 import com.intellij.openapi.actionSystem.ex.ComboBoxAction
@@ -19,11 +21,15 @@ import javax.swing.JComponent
 class ChooseTranslatorAction : ComboBoxAction(), DumbAware {
 
     init {
-        setPopupTitle("Translators")
+        setPopupTitle(adaptedMessage("choose.translator.popup.title"))
         isEnabledInModalContext = true
+        templatePresentation.text = message("action.ChooseTranslatorAction.text")
+        templatePresentation.description = message("action.ChooseTranslatorAction.description")
     }
 
     override fun update(e: AnActionEvent) {
+        e.presentation.isEnabledAndVisible = TranslatorAction.availableActions().size > 1
+
         TranslateService.translator.let {
             e.presentation.text = it.name
             e.presentation.icon = it.icon
@@ -34,7 +40,7 @@ class ChooseTranslatorAction : ComboBoxAction(), DumbAware {
         WindowManagerEx.getInstanceEx()
             .findFrameFor(e.project)
             ?.component
-            ?.let { createActionPopup("Translators", e.dataContext, it).showInCenterOf(it) }
+            ?.let { createActionPopup(message("choose.translator.popup.title"), e.dataContext, it).showInCenterOf(it) }
     }
 
     private fun createActionPopup(
@@ -63,7 +69,7 @@ class ChooseTranslatorAction : ComboBoxAction(), DumbAware {
     override fun getPreselectCondition(): Condition<AnAction> = TranslatorAction.PRESELECT_CONDITION
 
     override fun createPopupActionGroup(button: JComponent)
-            : DefaultActionGroup = DefaultActionGroup(TranslatorAction.ACTIONS)
+            : DefaultActionGroup = DefaultActionGroup(TranslatorAction.availableActions())
 
     override fun createComboBoxButton(presentation: Presentation): ComboBoxButton =
         object : ComboBoxButton(presentation) {

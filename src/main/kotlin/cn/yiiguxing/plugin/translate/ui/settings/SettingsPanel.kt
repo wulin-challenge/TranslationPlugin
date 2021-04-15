@@ -6,27 +6,28 @@ import cn.yiiguxing.plugin.translate.ui.SupportDialog
 import cn.yiiguxing.plugin.translate.ui.UI
 import cn.yiiguxing.plugin.translate.ui.form.SettingsForm
 import cn.yiiguxing.plugin.translate.ui.selected
+import cn.yiiguxing.plugin.translate.util.ByteSize
+import cn.yiiguxing.plugin.translate.util.CacheService
 import cn.yiiguxing.plugin.translate.util.SelectionMode
-import cn.yiiguxing.plugin.translate.util.TranslateService
+import cn.yiiguxing.plugin.translate.util.executeOnPooledThread
 import com.intellij.openapi.editor.event.DocumentEvent
 import com.intellij.openapi.editor.event.DocumentListener
+import com.intellij.openapi.options.ConfigurationException
 import com.intellij.openapi.project.ProjectManager
-import com.intellij.openapi.ui.ComboBox
-import com.intellij.ui.*
+import com.intellij.ui.CollectionComboBoxModel
+import com.intellij.ui.EditorTextField
+import com.intellij.ui.FontComboBox
+import com.intellij.ui.JBColor
 import com.intellij.util.ui.JBUI
-import icons.Icons
-import java.awt.Dimension
+import org.intellij.lang.regexp.RegExpLanguage
 import java.awt.event.ItemEvent
+import java.lang.ref.WeakReference
 import javax.swing.JComponent
-import javax.swing.JPanel
-import javax.swing.text.AttributeSet
-import javax.swing.text.PlainDocument
 
 /**
  * SettingsPanel
  */
-class SettingsPanel(settings: Settings, appStorage: AppStorage) : SettingsForm(settings, appStorage),
-    ConfigurablePanel {
+class SettingsPanel(val settings: Settings, val appStorage: AppStorage) : SettingsForm(), ConfigurablePanel {
 
     private var validRegExp = true
 
@@ -35,87 +36,46 @@ class SettingsPanel(settings: Settings, appStorage: AppStorage) : SettingsForm(s
     init {
         primaryFontComboBox.fixFontComboBoxSize()
         phoneticFontComboBox.fixFontComboBoxSize()
-
-        setTitles()
+        primaryLanguageComboBox.model = CollectionComboBoxModel(Settings.instance.translator.supportedTargetLanguages())
+        ignoreRegExp = createRegexEditorField()
+        doLayout()
         setListeners()
-        initSeparatorsTextField()
-        initSelectionModeComboBox()
-        initTargetLangSelectionComboBox()
-        initTTSSourceComboBox()
+        initCache()
         initSupport()
     }
 
-    private fun setTitles() {
-        translateSettingsPanel.setTitledBorder(message("settings.title.translate"))
-        fontPanel.setTitledBorder(message("settings.title.font"))
-        historyPanel.setTitledBorder(message("settings.title.history"))
-        optionsPanel.setTitledBorder(message("settings.title.options"))
-    }
-
-    private fun initSelectionModeComboBox() {
-        with(selectionModeComboBox) {
-            model = CollectionComboBoxModel(listOf(SelectionMode.INCLUSIVE, SelectionMode.EXCLUSIVE))
-            renderer = SimpleListCellRenderer.create { label, value, _ ->
-                when (value) {
-                    SelectionMode.EXCLUSIVE -> {
-                        label.text = "Exclusive"
-                        label.toolTipText = message("settings.tooltip.exclusive")
-                    }
-                    else -> {
-                        label.text = "Inclusive"
-                        label.toolTipText = message("settings.tooltip.inclusive")
-                    }
-                }
+    private fun initCache() {
+        clearCacheButton.addActionListener {
+            clearCacheButton.isEnabled = false
+            val buttonRef = WeakReference(clearCacheButton)
+            val labelRef = WeakReference(cacheSizeLabel)
+            executeOnPooledThread {
+                CacheService.evictAllDiskCaches()
+                val size = CacheService.getDiskCacheSize()
+                labelRef.get()?.text = ByteSize.format(size)
+                buttonRef.get()?.isEnabled = true
             }
         }
-    }
 
-    private fun initTargetLangSelectionComboBox() {
-        with(targetLangSelectionComboBox) {
-            model = CollectionComboBoxModel(TargetLanguageSelection.values().asList())
-            renderer = SimpleListCellRenderer.create("") { it.displayName }
-        }
-    }
-
-    private fun initTTSSourceComboBox() {
-        with(ttsSourceComboBox) {
-            model = CollectionComboBoxModel(TTSSource.values().asList())
-            renderer = SimpleListCellRenderer.create("") { it.displayName }
-            preferredSize = Dimension(preferredSize.width, JBUI.scale(26))
-        }
-    }
-
-    private fun initSeparatorsTextField() {
-        separatorsTextField.document = object : PlainDocument() {
-            override fun insertString(offset: Int, str: String?, attr: AttributeSet?) {
-                val text = getText(0, length)
-                val stringToInsert = str
-                    ?.filter { it in ' '..'~' && !Character.isLetterOrDigit(it) && !text.contains(it) }
-                    ?.toSet()
-                    ?.take(10 - length)
-                    ?.joinToString("")
-                    ?: return
-                if (stringToInsert.isNotEmpty()) {
-                    super.insertString(offset, stringToInsert, attr)
-                }
-            }
+        val labelRef = WeakReference(cacheSizeLabel)
+        executeOnPooledThread {
+            val size = CacheService.getDiskCacheSize()
+            labelRef.get()?.text = ByteSize.format(size)
         }
     }
 
     private fun initSupport() {
-        supportLinkLabel.icon = Icons.Support
         supportLinkLabel.setListener({ _, _ -> SupportDialog.show() }, null)
     }
 
     private fun setListeners() {
-        fontCheckBox.addItemListener {
-            val selected = fontCheckBox.isSelected
-            primaryFontComboBox.isEnabled = selected
-            phoneticFontComboBox.isEnabled = selected
-            primaryFontPreview.isEnabled = selected
-            primaryFontLabel.isEnabled = selected
-            phoneticFontLabel.isEnabled = selected
-            phoneticFontPreview.isEnabled = selected
+        translationEngineComboBox.addItemListener { e ->
+            val engine = e.item as TranslationEngine
+            primaryLanguageComboBox.model = CollectionComboBoxModel(engine.supportedTargetLanguages())
+            val selectedLang = primaryLanguageComboBox.selected
+            if (!engine.supportedTargetLanguages().contains(selectedLang)) {
+                primaryLanguageComboBox.selected = engine.primaryLanguage
+            }
         }
         primaryFontComboBox.addItemListener {
             if (it.stateChange == ItemEvent.SELECTED) {
@@ -127,14 +87,14 @@ class SettingsPanel(settings: Settings, appStorage: AppStorage) : SettingsForm(s
                 phoneticFontPreview.previewFont(phoneticFontComboBox.fontName)
             }
         }
+        restoreDefaultButton.addActionListener {
+            primaryFontComboBox.fontName = UI.defaultFont.fontName
+            phoneticFontComboBox.fontName = UI.defaultFont.fontName
+        }
         clearHistoriesButton.addActionListener {
             appStorage.clearHistories()
         }
-        autoPlayTTSCheckBox.addItemListener {
-            ttsSourceComboBox.isEnabled = autoPlayTTSCheckBox.isSelected
-        }
 
-        val ignoreRegExp = ignoreRegExp
         checkIgnoreRegExpButton.addActionListener {
             val project = ProjectManager.getInstance().defaultProject
             CheckRegExpDialog(project, ignoreRegExp.text) { newRegExp ->
@@ -143,6 +103,9 @@ class SettingsPanel(settings: Settings, appStorage: AppStorage) : SettingsForm(s
                 }
             }.show()
         }
+        configureTranslationEngineLink.setListener({ _, _ ->
+            translationEngineComboBox.selected?.showConfigurationDialog()
+        }, null)
 
         val background = ignoreRegExp.background
         ignoreRegExp.addDocumentListener(object : DocumentListener {
@@ -174,6 +137,12 @@ class SettingsPanel(settings: Settings, appStorage: AppStorage) : SettingsForm(s
         return (size as? String)?.toIntOrNull() ?: -1
     }
 
+    private fun createRegexEditorField(): EditorTextField = EditorTextField(
+        "",
+        ProjectManager.getInstance().defaultProject,
+        RegExpLanguage.INSTANCE.associatedFileType
+    )
+
     override val isModified: Boolean
         get() {
             if (!validRegExp) {
@@ -181,14 +150,17 @@ class SettingsPanel(settings: Settings, appStorage: AppStorage) : SettingsForm(s
             }
 
             val settings = settings
-            return transPanelContainer.isModified
-                    || appStorage.maxHistorySize != getMaxHistorySize()
-                    || settings.autoSelectionMode != selectionModeComboBox.currentMode
+            return settings.translator != translationEngineComboBox.selected
+                    || !settings.translator.isConfigured()
+                    || settings.translator.primaryLanguage != primaryLanguageComboBox.selected
                     || settings.targetLanguageSelection != targetLangSelectionComboBox.selected
+                    || settings.googleTranslateSettings.useTranslateGoogleCom != useTranslateGoogleComCheckBox.isSelected
+                    || settings.autoSelectionMode != SelectionMode.takeNearestWord(takeNearestWordCheckBox.isSelected)
+                    || settings.takeWordWhenDialogOpens != takeWordCheckBox.isSelected
                     || settings.separators != separatorsTextField.text
-                    || settings.ignoreRegExp != ignoreRegExp.text
-                    || settings.isOverrideFont != fontCheckBox.isSelected
+                    || settings.ignoreRegex != ignoreRegExp.text
                     || settings.primaryFontFamily != primaryFontComboBox.fontName
+                    || settings.primaryFontPreviewText != primaryFontPreview.text
                     || settings.phoneticFontFamily != phoneticFontComboBox.fontName
                     || settings.foldOriginal != foldOriginalCheckBox.isSelected
                     || settings.keepFormat != keepFormatCheckBox.isSelected
@@ -200,11 +172,12 @@ class SettingsPanel(settings: Settings, appStorage: AppStorage) : SettingsForm(s
                     || settings.showWordsOnStartup != showWordsOnStartupCheckBox.isSelected
                     || settings.showExplanation != showExplanationCheckBox.isSelected
                     || settings.translateDocumentation != translateDocumentationCheckBox.isSelected
+                    || settings.showActionsInContextMenuOnlyWithSelection != showActionsInContextMenuOnlyWithSelectionCheckbox.isSelected
+                    || appStorage.maxHistorySize != getMaxHistorySize()
         }
 
 
     override fun apply() {
-        transPanelContainer.apply()
 
         getMaxHistorySize().let {
             if (it >= 0) {
@@ -212,17 +185,20 @@ class SettingsPanel(settings: Settings, appStorage: AppStorage) : SettingsForm(s
             }
         }
 
-        if (settings.showWordForms != showWordFormsCheckBox.isSelected) {
-            TranslateService.clearCaches()
-        }
-
         @Suppress("Duplicates")
         with(settings) {
-            isOverrideFont = fontCheckBox.isSelected
-            primaryFontFamily = primaryFontComboBox.fontName
-            phoneticFontFamily = phoneticFontComboBox.fontName
-            autoSelectionMode = selectionModeComboBox.currentMode
+            val selectedTranslator = translationEngineComboBox.selected ?: translator
+            if (!selectedTranslator.isConfigured()) {
+                throw ConfigurationException(message("settings.translator.requires.configuration", selectedTranslator.translatorName))
+            }
+            translator = selectedTranslator
+            translator.primaryLanguage = primaryLanguageComboBox.selected ?: translator.primaryLanguage
             targetLanguageSelection = targetLangSelectionComboBox.selected ?: TargetLanguageSelection.DEFAULT
+            googleTranslateSettings.useTranslateGoogleCom = useTranslateGoogleComCheckBox.isSelected
+            primaryFontFamily = primaryFontComboBox.fontName
+            primaryFontPreviewText = primaryFontPreview.text
+            phoneticFontFamily = phoneticFontComboBox.fontName
+            autoSelectionMode = SelectionMode.takeNearestWord(takeNearestWordCheckBox.isSelected)
             ttsSource = ttsSourceComboBox.selected ?: TTSSource.ORIGINAL
             separators = separatorsTextField.text
             foldOriginal = foldOriginalCheckBox.isSelected
@@ -234,21 +210,23 @@ class SettingsPanel(settings: Settings, appStorage: AppStorage) : SettingsForm(s
             showWordsOnStartup = showWordsOnStartupCheckBox.isSelected
             showExplanation = showExplanationCheckBox.isSelected
             translateDocumentation = translateDocumentationCheckBox.isSelected
+            showActionsInContextMenuOnlyWithSelection = showActionsInContextMenuOnlyWithSelectionCheckbox.isSelected
+            takeWordWhenDialogOpens = takeWordCheckBox.isSelected
 
             if (validRegExp) {
-                ignoreRegExp = this@SettingsPanel.ignoreRegExp.text
+                ignoreRegex = this@SettingsPanel.ignoreRegExp.text
             }
         }
     }
 
     @Suppress("Duplicates")
     override fun reset() {
-        transPanelContainer.reset()
-
-        val settings = settings
-        ignoreRegExp.text = settings.ignoreRegExp ?: ""
+        translationEngineComboBox.selected = settings.translator
+        primaryLanguageComboBox.selected = settings.translator.primaryLanguage
+        targetLangSelectionComboBox.selected = settings.targetLanguageSelection
+        useTranslateGoogleComCheckBox.isSelected = settings.googleTranslateSettings.useTranslateGoogleCom
+        ignoreRegExp.text = settings.ignoreRegex
         separatorsTextField.text = settings.separators
-        fontCheckBox.isSelected = settings.isOverrideFont
         foldOriginalCheckBox.isSelected = settings.foldOriginal
         keepFormatCheckBox.isSelected = settings.keepFormat
         autoPlayTTSCheckBox.isSelected = settings.autoPlayTTS
@@ -260,27 +238,23 @@ class SettingsPanel(settings: Settings, appStorage: AppStorage) : SettingsForm(s
         primaryFontComboBox.fontName = settings.primaryFontFamily
         phoneticFontComboBox.fontName = settings.phoneticFontFamily
         primaryFontPreview.previewFont(settings.primaryFontFamily)
+        primaryFontPreview.text = settings.primaryFontPreviewText
         phoneticFontPreview.previewFont(settings.phoneticFontFamily)
-
         maxHistoriesSizeComboBox.editor.item = appStorage.maxHistorySize.toString()
-        selectionModeComboBox.selected = settings.autoSelectionMode
-        targetLangSelectionComboBox.selected = settings.targetLanguageSelection
+        takeNearestWordCheckBox.isSelected = settings.autoSelectionMode == SelectionMode.EXCLUSIVE
         ttsSourceComboBox.selected = settings.ttsSource
         translateDocumentationCheckBox.isSelected = settings.translateDocumentation
+        showActionsInContextMenuOnlyWithSelectionCheckbox.isSelected = settings.showActionsInContextMenuOnlyWithSelection
+        takeWordCheckBox.isSelected = settings.takeWordWhenDialogOpens
     }
 
     companion object {
         private val BACKGROUND_COLOR_ERROR = JBColor(0xffb1a0, 0x6e2b28)
-        private val ComboBox<SelectionMode>.currentMode get() = selected ?: SelectionMode.INCLUSIVE
 
         private fun FontComboBox.fixFontComboBoxSize() {
             val size = preferredSize
             size.width = size.height * 8
             preferredSize = size
-        }
-
-        private fun JPanel.setTitledBorder(title: String) {
-            border = IdeBorderFactory.createTitledBorder(title)
         }
     }
 }

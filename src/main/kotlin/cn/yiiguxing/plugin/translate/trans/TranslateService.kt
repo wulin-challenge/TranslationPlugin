@@ -2,10 +2,12 @@ package cn.yiiguxing.plugin.translate.trans
 
 import cn.yiiguxing.plugin.translate.Settings
 import cn.yiiguxing.plugin.translate.SettingsChangeListener
+import cn.yiiguxing.plugin.translate.ui.settings.TranslationEngine
 import cn.yiiguxing.plugin.translate.util.*
 import cn.yiiguxing.plugin.translate.wordbook.WordBookItem
 import cn.yiiguxing.plugin.translate.wordbook.WordBookListener
 import cn.yiiguxing.plugin.translate.wordbook.WordBookService
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.components.ServiceManager
 import com.intellij.openapi.diagnostic.Logger
@@ -15,49 +17,40 @@ import com.intellij.util.messages.MessageBusConnection
 /**
  * TranslateService
  */
-class TranslateService private constructor() {
+class TranslateService private constructor() : Disposable {
 
     @Volatile
     var translator: Translator = DEFAULT_TRANSLATOR
         private set
-
-    private val cache = LruCache<CacheKey, Translation>(500)
 
     private val listeners = mutableMapOf<ListenerKey, MutableSet<TranslateListener>>()
 
     init {
         setTranslator(Settings.instance.translator)
         Application.messageBus
-            .connect()
+            .connect(this)
             .subscribeSettingsTopic()
             .subscribeWordBookTopic()
     }
 
-    fun setTranslator(translatorId: String) {
-        if (translatorId != translator.id) {
-            translator = when (translatorId) {
-                YoudaoTranslator.TRANSLATOR_ID -> YoudaoTranslator
-                BaiduTranslator.TRANSLATOR_ID -> BaiduTranslator
+    fun setTranslator(newTranslator: TranslationEngine) {
+        if (newTranslator.id != translator.id) {
+            translator = when (newTranslator) {
+                TranslationEngine.YOUDAO -> YoudaoTranslator
+                TranslationEngine.BAIDU -> BaiduTranslator
                 else -> DEFAULT_TRANSLATOR
             }
         }
     }
 
-    fun getTranslators(): List<Translator> = listOf(GoogleTranslator, YoudaoTranslator, BaiduTranslator)
-
     fun getCache(text: String, srcLang: Lang, targetLang: Lang): Translation? {
         checkThread()
-        return cache[CacheKey(text, srcLang, targetLang, translator.id)]
-    }
-
-    fun clearCaches() {
-        checkThread()
-        cache.evictAll()
+        return CacheService.getMemoryCache(text, srcLang, targetLang, translator.id)
     }
 
     fun translate(text: String, srcLang: Lang, targetLang: Lang, listener: TranslateListener) {
         checkThread()
-        cache[CacheKey(text, srcLang, targetLang, translator.id)]?.let {
+        CacheService.getMemoryCache(text, srcLang, targetLang, translator.id)?.let {
             listener.onSuccess(it)
             return
         }
@@ -74,10 +67,10 @@ class TranslateService private constructor() {
                 with(translator) {
                     translate(text, srcLang, targetLang).let { translation ->
                         translation.favoriteId = WordBookService.instance
-                            .takeIf { it.canAddToWordbook(text) }
+                            .takeIf { it.isInitialized && it.canAddToWordbook(text) }
                             // 这里的`sourceLanguage`参数不能直接使用`srcLang`，因为`srcLang`的值可能为`Lang.AUTO`
                             ?.getWordId(text, translation.srcLang, translation.targetLang)
-                        translation.cache(text, srcLang, targetLang, id)
+                        CacheService.putMemoryCache(text, srcLang, targetLang, id, translation)
                         invokeLater(ModalityState.any()) {
                             listeners.run(key) { onSuccess(translation) }
                         }
@@ -99,50 +92,32 @@ class TranslateService private constructor() {
         remove(key)?.forEach { it.action() }
     }
 
-    private fun Translation.cache(text: String, srcLang: Lang, targetLang: Lang, translatorId: String) {
-        val cache = cache
-        cache.put(CacheKey(text, srcLang, targetLang, translatorId), this)
-        if (Lang.AUTO == srcLang) {
-            cache.put(CacheKey(text, this.srcLang, targetLang, translatorId), this)
-        }
-        if (Lang.AUTO == targetLang) {
-            cache.put(CacheKey(text, srcLang, this.targetLang, translatorId), this)
-        }
-        if (Lang.AUTO == srcLang && Lang.AUTO == targetLang) {
-            cache.put(CacheKey(text, this.srcLang, this.targetLang, translatorId), this)
-        }
-    }
-
     private fun notifyFavoriteAdded(item: WordBookItem) {
         checkThread()
-        synchronized(cache) {
-            for ((_, translation) in cache.snapshot) {
-                if (translation.favoriteId == null &&
-                    translation.srcLang == item.sourceLanguage &&
-                    translation.targetLang == item.targetLanguage &&
-                    translation.original.equals(item.word, true)
-                ) {
-                    translation.favoriteId = item.id
-                }
+        for ((_, translation) in CacheService.getMemoryCacheSnapshot()) {
+            if (translation.favoriteId == null &&
+                translation.srcLang == item.sourceLanguage &&
+                translation.targetLang == item.targetLanguage &&
+                translation.original.equals(item.word, true)
+            ) {
+                translation.favoriteId = item.id
             }
         }
     }
 
     private fun notifyFavoriteRemoved(favoriteId: Long) {
         checkThread()
-        synchronized(cache) {
-            for ((_, translation) in cache.snapshot) {
-                if (translation.favoriteId == favoriteId) {
-                    translation.favoriteId = null
-                }
+        for ((_, translation) in CacheService.getMemoryCacheSnapshot()) {
+            if (translation.favoriteId == favoriteId) {
+                translation.favoriteId = null
             }
         }
     }
 
     private fun MessageBusConnection.subscribeSettingsTopic() = apply {
         subscribe(SettingsChangeListener.TOPIC, object : SettingsChangeListener {
-            override fun onTranslatorChanged(settings: Settings, translatorId: String) {
-                setTranslator(translatorId)
+            override fun onTranslatorChanged(settings: Settings, translationEngine: TranslationEngine) {
+                setTranslator(translationEngine)
             }
         })
     }
@@ -156,6 +131,8 @@ class TranslateService private constructor() {
             override fun onWordRemoved(service: WordBookService, id: Long) = notifyFavoriteRemoved(id)
         })
     }
+
+    override fun dispose() {}
 
     private data class ListenerKey(val text: String, val srcLang: Lang, val targetLang: Lang)
 

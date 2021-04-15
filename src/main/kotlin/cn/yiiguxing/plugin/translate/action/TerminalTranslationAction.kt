@@ -1,6 +1,7 @@
 package cn.yiiguxing.plugin.translate.action
 
-import cn.yiiguxing.plugin.translate.util.TranslationUIManager
+import cn.yiiguxing.plugin.translate.adaptedMessage
+import cn.yiiguxing.plugin.translate.service.TranslationUIManager
 import cn.yiiguxing.plugin.translate.util.isNullOrBlank
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
@@ -11,6 +12,7 @@ class TerminalTranslationAction : AnAction(), DumbAware {
 
     override fun update(e: AnActionEvent) {
         e.presentation.isEnabledAndVisible = !e.getSelectedTextFromTerminal().isNullOrBlank()
+        templatePresentation.text = adaptedMessage("action.TerminalTranslationAction.text")
     }
 
     override fun actionPerformed(e: AnActionEvent) {

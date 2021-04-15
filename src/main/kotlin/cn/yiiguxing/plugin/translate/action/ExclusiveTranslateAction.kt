@@ -1,5 +1,6 @@
 package cn.yiiguxing.plugin.translate.action
 
+import cn.yiiguxing.plugin.translate.adaptedMessage
 import cn.yiiguxing.plugin.translate.message
 import cn.yiiguxing.plugin.translate.util.SelectionMode
 
@@ -9,6 +10,8 @@ import cn.yiiguxing.plugin.translate.util.SelectionMode
 class ExclusiveTranslateAction : TranslateAction(false) {
 
     init {
+        isEnabledInModalContext = true
+        templatePresentation.text = adaptedMessage("action.ExclusiveTranslateAction.text")
         templatePresentation.description = message("action.description.exclusive")
     }
 

@@ -1,9 +1,10 @@
 package cn.yiiguxing.plugin.translate
 
 import cn.yiiguxing.plugin.translate.trans.BaiduTranslator
-import cn.yiiguxing.plugin.translate.trans.GoogleTranslator
 import cn.yiiguxing.plugin.translate.trans.Lang
 import cn.yiiguxing.plugin.translate.trans.YoudaoTranslator
+import cn.yiiguxing.plugin.translate.ui.settings.TranslationEngine
+import cn.yiiguxing.plugin.translate.ui.settings.TranslationEngine.GOOGLE
 import cn.yiiguxing.plugin.translate.util.PasswordSafeDelegate
 import cn.yiiguxing.plugin.translate.util.SelectionMode
 import com.intellij.openapi.application.ApplicationManager
@@ -20,14 +21,14 @@ import kotlin.properties.Delegates
 /**
  * Settings
  */
-@State(name = "Settings", storages = [(Storage("yiiguxing.translation.xml"))])
+@State(name = "Settings", storages = [(Storage(STORAGE_NAME))])
 class Settings : PersistentStateComponent<Settings> {
 
     /**
      * 翻译API
      */
-    var translator: String
-            by Delegates.observable(GoogleTranslator.TRANSLATOR_ID) { _, oldValue: String, newValue: String ->
+    var translator: TranslationEngine
+            by Delegates.observable(GOOGLE) { _, oldValue: TranslationEngine, newValue: TranslationEngine ->
                 if (oldValue != newValue) {
                     settingsChangePublisher.onTranslatorChanged(this, newValue)
                 }
@@ -79,7 +80,7 @@ class Settings : PersistentStateComponent<Settings> {
     /**
      * 翻译时需要忽略的内容
      */
-    var ignoreRegExp: String? = null
+    var ignoreRegex: String = "[\\*/#\$]"
 
     /**
      * 分隔符
@@ -134,15 +135,20 @@ class Settings : PersistentStateComponent<Settings> {
     var autoSelectionMode: SelectionMode = SelectionMode.INCLUSIVE
 
     /**
+     * 打开翻译对话框时取词翻译
+     */
+    var takeWordWhenDialogOpens: Boolean = false
+
+    /**
      * 目标语言选择
      */
     var targetLanguageSelection: TargetLanguageSelection = TargetLanguageSelection.DEFAULT
 
-    var translateDocumentation: Boolean = true
+    var translateDocumentation: Boolean = false
 
-    @Transient
-    private val settingsChangePublisher: SettingsChangeListener =
-        ApplicationManager.getApplication().messageBus.syncPublisher(SettingsChangeListener.TOPIC)
+    var showActionsInContextMenuOnlyWithSelection: Boolean = true
+
+    var primaryFontPreviewText = message("settings.font.default.preview.text")
 
     override fun getState(): Settings = this
 
@@ -171,6 +177,9 @@ private const val YOUDAO_APP_KEY = "YOUDAO_APP_KEY"
 private const val BAIDU_SERVICE_NAME = "YIIGUXING.TRANSLATION.BAIDU"
 private const val BAIDU_APP_KEY = "BAIDU_APP_KEY"
 
+private val settingsChangePublisher: SettingsChangeListener =
+    ApplicationManager.getApplication().messageBus.syncPublisher(SettingsChangeListener.TOPIC)
+
 /**
  * 谷歌翻译选项
  *
@@ -186,10 +195,15 @@ data class GoogleTranslateSettings(var primaryLanguage: Lang = Lang.default, var
 @Tag("app-key")
 abstract class AppKeySettings(
     var primaryLanguage: Lang,
-    var appId: String = "",
     securityName: String,
     securityKey: String
 ) {
+    var appId: String by Delegates.observable("") { _, oldValue: String, newValue: String ->
+        if (oldValue != newValue) {
+            settingsChangePublisher.onTranslatorConfigurationChanged()
+        }
+    }
+
     private var _appKey: String? by PasswordSafeDelegate(securityName, securityKey)
         @Transient get
         @Transient set
@@ -202,6 +216,7 @@ abstract class AppKeySettings(
     @Transient
     fun setAppKey(value: String?) {
         _appKey = if (value.isNullOrBlank()) null else value
+        settingsChangePublisher.onTranslatorConfigurationChanged()
     }
 }
 
@@ -231,14 +246,16 @@ enum class TTSSource(val displayName: String) {
 }
 
 enum class TargetLanguageSelection(val displayName: String) {
-    DEFAULT(message("default")),
+    DEFAULT(message("settings.item.main.or.english")),
     PRIMARY_LANGUAGE(message("settings.item.primaryLanguage")),
     LAST(message("settings.item.last"))
 }
 
 interface SettingsChangeListener {
 
-    fun onTranslatorChanged(settings: Settings, translatorId: String) {}
+    fun onTranslatorChanged(settings: Settings, translationEngine: TranslationEngine) {}
+
+    fun onTranslatorConfigurationChanged() {}
 
     fun onOverrideFontChanged(settings: Settings) {}
 

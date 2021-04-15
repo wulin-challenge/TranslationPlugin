@@ -15,6 +15,4 @@ interface TranslationDocument {
     }
 }
 
-class NamedTranslationDocument(val name: String, document: TranslationDocument) : TranslationDocument by document
-
-fun StyledViewer.setup(document: TranslationDocument) = document.setupTo(this)
+fun StyledViewer.setup(document: TranslationDocument?) = document?.setupTo(this)

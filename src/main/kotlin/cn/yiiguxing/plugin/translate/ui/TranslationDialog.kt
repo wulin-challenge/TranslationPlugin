@@ -6,10 +6,12 @@ import cn.yiiguxing.plugin.translate.trans.Lang
 import cn.yiiguxing.plugin.translate.trans.Translation
 import cn.yiiguxing.plugin.translate.ui.form.TranslationDialogForm
 import cn.yiiguxing.plugin.translate.ui.settings.OptionsConfigurable
+import cn.yiiguxing.plugin.translate.ui.settings.TranslationEngine
 import cn.yiiguxing.plugin.translate.util.Settings
 import cn.yiiguxing.plugin.translate.util.alphaBlend
 import cn.yiiguxing.plugin.translate.util.copyToClipboard
 import cn.yiiguxing.plugin.translate.util.invokeLater
+import com.intellij.icons.AllIcons
 import com.intellij.openapi.actionSystem.CommonShortcuts
 import com.intellij.openapi.actionSystem.ex.ActionUtil
 import com.intellij.openapi.application.ApplicationManager
@@ -39,13 +41,14 @@ import javax.swing.text.JTextComponent
 class TranslationDialog(private val project: Project?) : TranslationDialogForm(project), View, HistoriesChangedListener,
     SettingsChangeListener {
 
-    private val processPane = ProcessComponent("Querying...")
+    private val processPane = ProcessComponent()
     private val translationPane = DialogTranslationPane(project, Settings)
     private val translationPanel = ScrollPane(translationPane)
-    private val closeButton = ActionLink(icon = Icons.Close, hoveringIcon = Icons.ClosePressed) { close() }
+    private val closeButton =
+        ActionLink(icon = AllIcons.Windows.CloseActive, hoveringIcon = AllIcons.Windows.CloseInactive) { close() }
 
     private val presenter: Presenter = TranslationPresenter(this)
-    private val inputModel: MyModel = MyModel(presenter.histories)
+    private val historyModel: HistoryModel = HistoryModel(presenter.histories)
 
     private var ignoreLanguageEvent: Boolean = false
     private var ignoreInputEvent: Boolean = false
@@ -100,7 +103,7 @@ class TranslationDialog(private val project: Project?) : TranslationDialogForm(p
         initFont()
 
         translateButton.apply {
-            icon = Icons.Translate
+            icon = Icons.Translation
             addActionListener { translateInternal(inputComboBox.editor.item.toString()) }
             minimumSize = JBDimension(45, 0)
             maximumSize = JBDimension(45, Int.MAX_VALUE)
@@ -119,7 +122,7 @@ class TranslationDialog(private val project: Project?) : TranslationDialogForm(p
     private fun initTitle() {
         closeButton.apply {
             isVisible = false
-            disabledIcon = Icons.ClosePressed
+            disabledIcon = AllIcons.Windows.CloseInactive
         }
         titlePanel.apply {
             setText("Translation")
@@ -149,8 +152,8 @@ class TranslationDialog(private val project: Project?) : TranslationDialogForm(p
         minimumSize = JBDimension(width, 0)
         maximumSize = JBDimension(width, Int.MAX_VALUE)
         preferredSize = JBDimension(width, (preferredSize.height / scale).toInt())
-        model = inputModel
-        renderer = ComboRenderer()
+        model = historyModel
+        renderer = HistoryRenderer({ sourceLangComboBox.selected }, { targetLangComboBox.selected }, presenter)
 
         (editor.editorComponent as JTextComponent).let {
             it.addFocusListener(object : FocusAdapter() {
@@ -211,8 +214,8 @@ class TranslationDialog(private val project: Project?) : TranslationDialogForm(p
     private fun ComboBox<Lang>.init(languages: List<Lang>) {
         andTransparent()
         foreground = JBColor(0x555555, 0xACACAC)
-        ui = LangComboBoxUI(this, SwingConstants.CENTER)
-        model = LanguageListModel(languages)
+        setUI(LangComboBoxUI(this, SwingConstants.CENTER))
+        model = LanguageListModel.sorted(languages)
 
         fun ComboBox<Lang>.swap(old: Any?, new: Any?) {
             if (new == selectedItem && old != Lang.AUTO && new != Lang.AUTO) {
@@ -275,6 +278,9 @@ class TranslationDialog(private val project: Project?) : TranslationDialogForm(p
                 if (HTML_DESCRIPTION_SETTINGS == hyperlinkEvent.description) {
                     close()
                     OptionsConfigurable.showSettingsDialog(project)
+                } else if (HTML_DESCRIPTION_TRANSLATOR_CONFIGURATION == hyperlinkEvent.description) {
+                    close()
+                    presenter.translator.checkConfiguration()
                 }
             }
         })
@@ -391,11 +397,11 @@ class TranslationDialog(private val project: Project?) : TranslationDialogForm(p
     }
 
     private fun update() {
-        if (isShowing && inputModel.size > 0) {
+        if (isShowing && historyModel.size > 0) {
             ignoreInputEvent = true
             inputComboBox.selectedIndex = 0
             ignoreInputEvent = false
-            translate(inputModel.getElementAt(0))
+            translate(historyModel.getElementAt(0))
         }
     }
 
@@ -476,7 +482,7 @@ class TranslationDialog(private val project: Project?) : TranslationDialogForm(p
         ignoreLanguageEvent = false
     }
 
-    override fun onTranslatorChanged(settings: Settings, translatorId: String) {
+    override fun onTranslatorChanged(settings: Settings, translationEngine: TranslationEngine) {
         presenter.supportedLanguages.let { (src, target) ->
             sourceLangComboBox.apply {
                 val srcSelected = selected.takeIf { src.contains(it) } ?: src.first()
@@ -492,7 +498,7 @@ class TranslationDialog(private val project: Project?) : TranslationDialogForm(p
 
     override fun onHistoriesChanged() {
         if (!disposed) {
-            inputModel.fireContentsChanged()
+            historyModel.fireContentsChanged()
         }
     }
 
@@ -528,7 +534,7 @@ class TranslationDialog(private val project: Project?) : TranslationDialogForm(p
             return
         }
 
-        inputModel.setSelectedItem(text)
+        historyModel.setSelectedItem(text)
         showCard(CARD_PROCESSING)
         setLanguageComponentsEnable(false)
     }
@@ -553,68 +559,6 @@ class TranslationDialog(private val project: Project?) : TranslationDialogForm(p
         messagePane.text = errorMessage
         showCard(CARD_MASSAGE)
         setLanguageComponentsEnable(true)
-    }
-
-    private class MyModel(private val fullList: List<String>) : AbstractListModel<String>(), ComboBoxModel<String> {
-        private var selectedItem: Any? = null
-
-        override fun getElementAt(index: Int): String = fullList[index]
-
-        override fun getSize(): Int = fullList.size
-
-        override fun getSelectedItem(): Any? = selectedItem
-
-        override fun setSelectedItem(anItem: Any) {
-            selectedItem = anItem
-            fireContentsChanged()
-        }
-
-        internal fun fireContentsChanged() {
-            fireContentsChanged(this, -1, -1)
-        }
-    }
-
-    private inner class ComboRenderer : SimpleListCellRenderer<String>() {
-        private val builder = StringBuilder()
-
-        override fun customize(
-            list: JList<out String>,
-            value: String?,
-            index: Int,
-            selected: Boolean,
-            hasFocus: Boolean
-        ) {
-            if (list.width == 0 || value.isNullOrBlank()) { // 在没有确定大小之前不设置真正的文本,否则控件会被过长的文本撑大.
-                text = null
-            } else {
-                setRenderText(value)
-            }
-        }
-
-
-        private fun setRenderText(value: String) {
-            val text = with(builder) {
-                setLength(0)
-
-                append("<html><body><b>")
-                append(value)
-                append("</b>")
-
-                val src = sourceLangComboBox.selected
-                val target = targetLangComboBox.selected
-                if (src != null && target != null) {
-                    presenter.getCache(value, src, target)?.let {
-                        append("  -  <i><small>")
-                        append(it.translation)
-                        append("</small></i>")
-                    }
-                }
-
-                builder.append("</body></html>")
-                toString()
-            }
-            setText(text)
-        }
     }
 
     private inner class ResizableListener : MouseAdapter() {

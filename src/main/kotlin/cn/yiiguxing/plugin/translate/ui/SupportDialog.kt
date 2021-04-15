@@ -3,7 +3,9 @@ package cn.yiiguxing.plugin.translate.ui
 import cn.yiiguxing.plugin.translate.*
 import cn.yiiguxing.plugin.translate.ui.form.SupportForm
 import com.intellij.ide.BrowserUtil
+import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.ui.DialogWrapper
+import com.intellij.openapi.ui.MessageType
 import com.intellij.openapi.ui.popup.Balloon
 import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.ui.JBColor
@@ -11,6 +13,7 @@ import com.intellij.ui.components.labels.LinkLabel
 import com.intellij.util.ui.JBUI
 import org.apache.http.client.utils.URIBuilder
 import java.awt.Desktop
+import java.awt.datatransfer.StringSelection
 import javax.swing.Action
 import javax.swing.JComponent
 import javax.swing.UIManager
@@ -35,13 +38,23 @@ class SupportDialog private constructor() : DialogWrapper(null) {
         rootPane.background = UIManager.getColor("TextArea.background")
 
         starLinkLabel.init(GITHUB_URL)
-        prLinkLab.init(GITHUB_URL)
+        prLinkLabel.init(GITHUB_URL)
         reportLinkLabel.init(NEW_ISSUES_URL)
         ideaLinkLabel.init(NEW_ISSUES_URL)
         openCollectiveLinkLabel.init(OPEN_COLLECTIVE_URL, false)
 
         donateLinkLabel.icon = null
         donateLinkLabel.setListener({ _, _ -> showDonatePop(donateLinkLabel) }, SUPPORT_PATRONS_URL)
+
+        shareLinkLabel.icon = null
+        shareLinkLabel.setListener({ label, linkUrl ->
+            CopyPasteManager.getInstance().setContents(StringSelection(linkUrl))
+            JBPopupFactory.getInstance().apply {
+                createHtmlTextBalloonBuilder(message("support.share.notification"), MessageType.INFO, null)
+                    .createBalloon()
+                    .show(guessBestPopupLocation(label), Balloon.Position.below)
+            }
+        }, SUPPORT_SHARE_URL)
     }
 
     private fun LinkLabel<String>.init(url: String, cleanIcon: Boolean = true) {
@@ -63,7 +76,7 @@ class SupportDialog private constructor() : DialogWrapper(null) {
             支付平台：支付宝/微信支付
             支付宝用户名/微信用户名/单号（后5位）：</i></b><br/>
             邮箱地址：<a href="#e-mail"><b>yii.guxing@gmail.com</b></a> (点击发送邮件)<br/>
-            您提供的名字、网站和捐赠总额将会被添加到<a href="#patrons"><b>Patrons/捐赠者</b></a>列表中，列表将按捐赠总额列出前50名捐赠者。<br/>
+            您提供的名字、网站和捐赠总额将会被添加到<a href="#patrons"><b>捐赠者</b></a>列表中。<br/>
             感谢您的慷慨捐赠！
         """.trimIndent()
         JBPopupFactory.getInstance()

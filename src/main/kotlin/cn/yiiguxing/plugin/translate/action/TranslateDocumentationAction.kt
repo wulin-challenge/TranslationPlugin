@@ -1,5 +1,6 @@
 package cn.yiiguxing.plugin.translate.action
 
+import cn.yiiguxing.plugin.translate.adaptedMessage
 import cn.yiiguxing.plugin.translate.documentation.getTranslatedDocumentation
 import cn.yiiguxing.plugin.translate.message
 import cn.yiiguxing.plugin.translate.provider.DocumentationElementProvider
@@ -9,9 +10,10 @@ import com.intellij.codeInsight.CodeInsightBundle
 import com.intellij.codeInsight.documentation.DocumentationComponent
 import com.intellij.codeInsight.documentation.DocumentationManager
 import com.intellij.lang.documentation.DocumentationProvider
-import com.intellij.openapi.Disposable
+import com.intellij.notification.Notification
+import com.intellij.notification.NotificationAction
+import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DataContext
-import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.popup.JBPopupFactory
@@ -28,6 +30,11 @@ import java.awt.Dimension
 import java.lang.ref.WeakReference
 
 class TranslateDocumentationAction : PsiElementTranslateAction() {
+
+    init {
+        templatePresentation.text = adaptedMessage("action.TranslateDocumentationAction.text")
+        templatePresentation.description = message("action.TranslateDocumentationAction.description")
+    }
 
     override fun pickPsiElement(editor: Editor, psiFile: PsiFile, dataContext: DataContext): PsiElement? {
         return DocumentationElementProvider
@@ -46,7 +53,7 @@ class TranslateDocumentationAction : PsiElementTranslateAction() {
             .forLanguage(element.language)
             .getDocumentationOwner(element)
             ?: return
-        val provider = docCommentOwner.documentationProvider ?: return
+        val provider = docCommentOwner.documentationProvider
 
         executeOnPooledThread {
             val documentationComponentRef = Ref<DocumentationComponent>()
@@ -61,14 +68,15 @@ class TranslateDocumentationAction : PsiElementTranslateAction() {
                     val e = editorRef.get()?.takeUnless { it.isDisposed } ?: return@invokeAndWait
                     val documentationComponent = showPopup(e, docCommentOwner.title)
                     documentationComponentRef.set(documentationComponent)
-                    Disposer.register(documentationComponent, Disposable { documentationComponentRef.set(null) })
+                    Disposer.register(documentationComponent, { documentationComponentRef.set(null) })
                 }
 
                 if (documentationComponentRef.isNull) {
                     return@executeOnPooledThread
                 }
 
-                val translatedDocumentation = getTranslatedDocumentation(doc)
+                val translatedDocumentation =
+                    TranslateService.translator.getTranslatedDocumentation(doc, element.language)
                 invokeLater {
                     val documentationComponent = documentationComponentRef.get() ?: return@invokeLater
                     val e = editorRef.get()?.takeUnless { it.isDisposed }
@@ -83,7 +91,7 @@ class TranslateDocumentationAction : PsiElementTranslateAction() {
                     }
                 }
             } catch (e: Throwable) {
-                logAndShowWarning(e, project)
+                showWarning(e, project)
                 invokeLater {
                     documentationComponentRef.get()?.hint?.cancel()
                 }
@@ -132,29 +140,32 @@ class TranslateDocumentationAction : PsiElementTranslateAction() {
 
 
     companion object {
-        private const val NOTIFICATION_DISPLAY_ID = "Document Translation"
-
         private const val DOCUMENTATION_POPUP_SIZE = "documentation.popup.size"
 
         private const val MIN_HEIGHT = 50
         private val MAX_DEFAULT = JBDimension(500, 350)
 
-        private val LOGGER: Logger = Logger.getInstance(TranslateDocumentationAction::class.java)
-
-        fun logAndShowWarning(e: Throwable, project: Project?) {
-            LOGGER.w(e.message ?: "", e)
+        fun showWarning(e: Throwable, project: Project?) {
             invokeLater {
+                val exceptionMessage = e.message ?: ""
                 Notifications.showErrorNotification(
                     project,
-                    NOTIFICATION_DISPLAY_ID,
-                    "Documentation",
-                    "Failed to translate documentation: ${e.message}",
-                    e
+                    message("translate.documentation.notification.title"),
+                    message("translate.documentation.error", exceptionMessage),
+                    e,
+                    DisableAutoDocTranslationAction()
                 )
             }
         }
 
-        private val PsiElement.documentationProvider: DocumentationProvider?
+        class DisableAutoDocTranslationAction : NotificationAction(message("translate.documentation.disable")) {
+            override fun actionPerformed(e: AnActionEvent, notification: Notification) {
+                Settings.translateDocumentation = false
+                notification.expire()
+            }
+        }
+
+        private val PsiElement.documentationProvider: DocumentationProvider
             get() = DocumentationManager.getProviderFromElement(this)
 
         private val PsiElement.title: String?
@@ -162,6 +173,7 @@ class TranslateDocumentationAction : PsiElementTranslateAction() {
                 if (IdeVersion.isIde2018OrNewer) return null
 
                 val title = SymbolPresentationUtil.getSymbolPresentableText(this)
+                @Suppress("InvalidBundleOrProperty")
                 return CodeInsightBundle.message("javadoc.info.title", title ?: text)
             }
 
@@ -196,7 +208,7 @@ class TranslateDocumentationAction : PsiElementTranslateAction() {
             }
 
             size = sizeToSet
-            setUserData(if (!restore) listOf(sizeToSet.clone()) else null)
+            setUserData(if (!restore) listOf(sizeToSet.clone()) else emptyList())
         }
     }
 }

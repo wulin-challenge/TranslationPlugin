@@ -36,7 +36,10 @@ class GoogleTTSPlayer(
     private val completeListener: ((TTSPlayer) -> Unit)? = null
 ) : TTSPlayer {
 
-    private val playTask: PlayTask
+    private val playTask: PlayTask = PlayTask(project).apply {
+        cancelText = "stop"
+        cancelTooltipText = "stop"
+    }
     private val playController: ProgressIndicator
 
     override val disposable: Disposable
@@ -71,10 +74,6 @@ class GoogleTTSPlayer(
     }
 
     init {
-        playTask = PlayTask(project).apply {
-            cancelText = "stop"
-            cancelTooltipText = "stop"
-        }
         playController = BackgroundableProcessIndicator(playTask).apply { isIndeterminate = true }
         disposable = playController
     }
@@ -89,7 +88,6 @@ class GoogleTTSPlayer(
                 LOGGER.w("TTS Error: Unsupported language: ${lang.code}.")
 
                 Notifications.showWarningNotification(
-                    NOTIFICATION_ID,
                     "TTS",
                     message("error.unsupportedLanguage", lang.langName),
                     project
@@ -99,7 +97,6 @@ class GoogleTTSPlayer(
                 if (throwable is NetworkException) {
                     Notifications.showErrorNotification(
                         project,
-                        NOTIFICATION_ID,
                         "TTS",
                         message("error.network"),
                         throwable
@@ -132,7 +129,7 @@ class GoogleTTSPlayer(
     private fun play(indicator: ProgressIndicator) {
         with(indicator) {
             checkCanceled()
-            text = "tts: downloading..."
+            text = message("tts.progress.downloading")
         }
         playlist
             .map { url ->
@@ -173,7 +170,7 @@ class GoogleTTSPlayer(
             checkCanceled()
             fraction = 0.0
             isIndeterminate = false
-            text = "tts: playing..."
+            text = message("tts.progress.playing")
         }
 
         this as DecodedMpegAudioInputStream
@@ -208,8 +205,6 @@ class GoogleTTSPlayer(
         private val LOGGER = Logger.getInstance(GoogleTTSPlayer::class.java)
 
         private const val MAX_TEXT_LENGTH = 200
-
-        private const val NOTIFICATION_ID = "TTS"
 
         val SUPPORTED_LANGUAGES: List<Lang> = listOf(
             Lang.CHINESE, Lang.ENGLISH, Lang.CHINESE_TRADITIONAL, Lang.ALBANIAN, Lang.ARABIC, Lang.ESTONIAN,

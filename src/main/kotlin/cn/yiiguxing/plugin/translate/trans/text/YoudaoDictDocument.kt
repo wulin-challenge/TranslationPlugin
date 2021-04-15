@@ -10,6 +10,7 @@ import cn.yiiguxing.plugin.translate.util.alphaBlend
 import cn.yiiguxing.plugin.translate.util.text.StyledString
 import cn.yiiguxing.plugin.translate.util.text.appendString
 import cn.yiiguxing.plugin.translate.util.text.getStyleOrAdd
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.ui.JBColor
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
@@ -18,6 +19,7 @@ import java.awt.Color
 import java.util.*
 import javax.swing.JComponent
 import javax.swing.text.*
+import kotlin.collections.HashMap
 
 class YoudaoDictDocument private constructor(
     private val wordStrings: List<CharSequence>,
@@ -57,10 +59,16 @@ class YoudaoDictDocument private constructor(
             if (wordString.style == POS_STYLE) "\t $wordString\t" else wordString.toString()
         }
 
-        if (variantStrings.isNotEmpty()) {
+        if (variantStrings.isNotEmpty() && showWordForms()) {
             appendString("\n\n")
             appendStrings(variantStrings)
         }
+    }
+
+    @Suppress("SENSELESS_COMPARISON")
+    private fun showWordForms(): Boolean {
+        // Application may be null in ui tests
+        return ApplicationManager.getApplication() == null || Settings.showWordForms
     }
 
     private inline fun StyledDocument.appendStrings(
@@ -114,20 +122,37 @@ class YoudaoDictDocument private constructor(
 
             val wordStrings = LinkedList<CharSequence>()
             val translations = ArraySet<String>()
+            val newWordsStringBuilder = StringBuilder()
             for (i in explanations.indices) {
                 if (i > 0) {
                     wordStrings += "\n"
                 }
 
                 val explanation = explanations[i]
+                val annotationMap = HashMap<String, String>()
                 val matchResult = REGEX_EXPLANATION.find(explanation)
-                val words = if (matchResult != null) {
+                val wordsString = if (matchResult != null) {
                     wordStrings += StyledString(matchResult.groups[GROUP_PART_OF_SPEECH]!!.value, POS_STYLE)
                     wordStrings += " "
+
                     matchResult.groups[GROUP_WORDS]!!.value.trim()
                 } else explanation.trim()
 
-                words.blocks(REGEX_WORDS_SEPARATOR) { separatorOrWord, isSeparator ->
+                // issue: #581 (https://github.com/YiiGuxing/TranslationPlugin/issues/581)
+                // 将词条中的注释部分使用占位符`[$index]`代替，以防止注释中有逗号等字符而被拆分。
+                var annotationIndex = 0
+                newWordsStringBuilder.setLength(0)
+                wordsString.blocks(REGEX_WORD_ANNOTATION) { block, isAnnotation ->
+                    if (isAnnotation) {
+                        val annotationPlaceholder = "[${annotationIndex++}]"
+                        newWordsStringBuilder.append(annotationPlaceholder)
+                        annotationMap[annotationPlaceholder] = block
+                    } else {
+                        newWordsStringBuilder.append(block)
+                    }
+                }
+
+                newWordsStringBuilder.toString().blocks(REGEX_WORDS_SEPARATOR) { separatorOrWord, isSeparator ->
                     if (isSeparator) {
                         val separator = when (separatorOrWord) {
                             ",", ";" -> "$separatorOrWord "
@@ -137,13 +162,15 @@ class YoudaoDictDocument private constructor(
                     } else {
                         separatorOrWord.trim().blocks(REGEX_WORD_ANNOTATION) { wordOrAnnotation, isAnnotation ->
                             if (isAnnotation) {
-                                wordOrAnnotation.blocks(REGEX_WORD) { annotationString, isWord ->
-                                    wordStrings += if (isWord) {
-                                        StyledString(annotationString, WORD_STYLE, WordType.VARIANT)
-                                    } else {
-                                        annotationString
+                                annotationMap
+                                    .getValue(wordOrAnnotation)
+                                    .blocks(REGEX_WORD) { annotationString, isWord ->
+                                        wordStrings += if (isWord) {
+                                            StyledString(annotationString, WORD_STYLE, WordType.VARIANT)
+                                        } else {
+                                            annotationString
+                                        }
                                     }
-                                }
                             } else {
                                 translations += wordOrAnnotation
                                 wordStrings += StyledString(wordOrAnnotation, WORD_STYLE, WordType.WORD)
@@ -231,7 +258,7 @@ class YoudaoDictDocument private constructor(
             }
             styledDocument.getStyleOrAdd(VARIANT_STYLE, wordBaseStyle) { style ->
                 StyleConstants.setItalic(style, true)
-                StyledViewer.StyleConstants.setClickable(style, WORD_COLOR, WORD_HOVER_COLOR, WordType.WORD)
+                StyledViewer.StyleConstants.setClickable(style, WORD_COLOR, WORD_HOVER_COLOR, WordType.VARIANT)
             }
             styledDocument.getStyleOrAdd(SEPARATOR_STYLE, defaultStyle) { style ->
                 StyleConstants.setForeground(style, JBColor(0xFF5555, 0x2196F3))

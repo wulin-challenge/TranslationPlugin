@@ -1,12 +1,15 @@
 package cn.yiiguxing.plugin.translate.wordbook
 
 import cn.yiiguxing.plugin.translate.message
+import cn.yiiguxing.plugin.translate.service.TranslationUIManager
 import cn.yiiguxing.plugin.translate.ui.wordbook.WordBookPanel
 import cn.yiiguxing.plugin.translate.ui.wordbook.WordDetailsDialog
-import cn.yiiguxing.plugin.translate.util.*
+import cn.yiiguxing.plugin.translate.util.Application
+import cn.yiiguxing.plugin.translate.util.Popups
 import cn.yiiguxing.plugin.translate.util.WordBookService
+import cn.yiiguxing.plugin.translate.util.assertIsDispatchThread
+import cn.yiiguxing.plugin.translate.util.executeOnPooledThread
 import com.intellij.icons.AllIcons
-import com.intellij.openapi.Disposable
 import com.intellij.openapi.actionSystem.ActionGroup
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
@@ -23,12 +26,16 @@ import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ex.ToolWindowEx
 import com.intellij.tools.SimpleActionGroup
-import com.intellij.ui.content.ContentManagerAdapter
+import com.intellij.ui.PopupMenuListenerAdapter
 import com.intellij.ui.content.ContentManagerEvent
+import com.intellij.ui.content.ContentManagerListener
 import com.intellij.util.ui.JBUI
 import icons.Icons
 import java.awt.datatransfer.StringSelection
+import java.awt.event.KeyAdapter
+import java.awt.event.KeyEvent
 import javax.swing.Icon
+import javax.swing.event.PopupMenuEvent
 
 /**
  * Word book view.
@@ -64,7 +71,7 @@ class WordBookView {
         val content = contentManager.factory.createContent(panel, null, false)
         content.tabName = TAB_NAME_ALL
         contentManager.addContent(content)
-        contentManager.addContentManagerListener(object : ContentManagerAdapter() {
+        contentManager.addContentManagerListener(object : ContentManagerListener {
             override fun selectionChanged(event: ContentManagerEvent) {
                 val words = if (event.content.tabName == TAB_NAME_ALL) {
                     words
@@ -86,7 +93,7 @@ class WordBookView {
             panel.showMessagePane()
         }
 
-        Disposer.register(project, Disposable {
+        Disposer.register(TranslationUIManager.disposable(project), {
             windows.remove(project)
             wordBookPanels.remove(project)
         })
@@ -98,6 +105,7 @@ class WordBookView {
     private fun getWordBookPanel(project: Project): WordBookPanel {
         return wordBookPanels.getOrPut(project) {
             WordBookPanel().apply {
+                setupKeyListener()
                 setupMenu(project)
                 onWordDoubleClicked { word -> openWordDetails(project, word) }
                 onDownloadDriver {
@@ -110,47 +118,80 @@ class WordBookView {
         }
     }
 
-    private fun WordBookPanel.setupMenu(project: Project) {
-        val panel = this@setupMenu
-        popupMenu = JBPopupMenu()
-            .addMenuItem(panel, message("wordbook.window.menu.detail"), Icons.Detail) { openWordDetails(project, it) }
-            .addMenuItem(panel, message("wordbook.window.menu.copy"), AllIcons.Actions.Copy) { word ->
-                CopyPasteManager.getInstance().setContents(StringSelection(word.word))
-            }
-            .addMenuItem(panel, message("wordbook.window.menu.delete"), AllIcons.Actions.Cancel) { word ->
-                val id = word.id
-                if (id != null) {
-                    val confirmed = Messages.showOkCancelDialog(
-                        message("wordbook.window.confirmation.delete.message", word.word),
-                        message("wordbook.window.confirmation.delete.title"),
-                        Messages.OK_BUTTON,
-                        Messages.CANCEL_BUTTON,
-                        null
-                    ) == Messages.OK
-                    if (confirmed) {
-                        executeOnPooledThread { WordBookService.removeWord(id) }
-                    }
+    private fun WordBookPanel.setupKeyListener() {
+        tableView.addKeyListener(object : KeyAdapter() {
+            override fun keyPressed(event: KeyEvent) {
+                if (event.keyCode == KeyEvent.VK_DELETE) {
+                    deleteWord(selectedWords)
+                    event.consume()
                 }
             }
+        })
     }
 
-    private inline fun JBPopupMenu.addMenuItem(
-        panel: WordBookPanel,
-        text: String,
-        icon: Icon,
-        crossinline action: (WordBookItem) -> Unit
-    ): JBPopupMenu {
-        val menuItem = JBMenuItem(text, icon)
-        menuItem.addActionListener { panel.selectedWord?.let { action(it) } }
-        add(menuItem)
+    private fun deleteWord(words: List<WordBookItem>) {
+        if (words.isEmpty()) {
+            return
+        }
 
-        return this
+        val message = if (words.size == 1) {
+            message("wordbook.window.confirmation.delete.message", words.joinToString { it.word })
+        } else {
+            message("wordbook.window.confirmation.delete.message.multiple", words.joinToString { it.word })
+        }
+        val confirmed = Messages.showOkCancelDialog(
+            message,
+            message("wordbook.window.confirmation.delete.title"),
+            Messages.getOkButton(),
+            Messages.getCancelButton(),
+            null
+        ) == Messages.OK
+        if (confirmed) {
+            executeOnPooledThread { WordBookService.removeWords(words.mapNotNull { it.id }) }
+        }
+    }
+
+    private fun WordBookPanel.setupMenu(project: Project) {
+        val panel = this@setupMenu
+        popupMenu = JBPopupMenu().also { menu ->
+            val detailItem = createMenuItem(message("wordbook.window.menu.detail"), Icons.Detail) {
+                panel.selectedWord?.let { word -> openWordDetails(project, word) }
+            }
+            val copyItem = createMenuItem(message("wordbook.window.menu.copy"), AllIcons.Actions.Copy) {
+                panel.selectedWord?.let { word ->
+                    CopyPasteManager.getInstance().setContents(StringSelection(word.word))
+                }
+            }
+            val deleteItem = createMenuItem(message("wordbook.window.menu.delete"), AllIcons.Actions.Cancel) {
+                deleteWord(panel.selectedWords)
+            }
+            menu.add(deleteItem)
+
+            menu.addPopupMenuListener(object : PopupMenuListenerAdapter() {
+                override fun popupMenuWillBecomeVisible(e: PopupMenuEvent) {
+                    if (!panel.isMultipleSelection) {
+                        menu.add(detailItem, 0)
+                        menu.add(copyItem, 1)
+                    } else {
+                        menu.remove(detailItem)
+                        menu.remove(copyItem)
+                    }
+                }
+            })
+        }
+
+    }
+
+    private inline fun createMenuItem(text: String, icon: Icon, crossinline action: () -> Unit): JBMenuItem {
+        return JBMenuItem(text, icon).apply {
+            addActionListener { action() }
+        }
     }
 
     private fun subscribeWordBookTopic() {
         if (!isInitialized) {
             Application.messageBus
-                .connect()
+                .connect(TranslationUIManager.disposable())
                 .subscribe(WordBookListener.TOPIC, object : WordBookListener {
                     override fun onInitialized(service: WordBookService) {
                         assertIsDispatchThread()
@@ -295,7 +336,7 @@ class WordBookView {
         WordDetailsDialog(project, word, groupedWords.keys).show()
     }
 
-    private abstract inner class WordBookAction(text: String, description: String? = null, icon: Icon? = null) :
+    private abstract inner class WordBookAction(text: String, description: String? = text, icon: Icon? = null) :
         DumbAwareAction(text, description, icon) {
 
         final override fun actionPerformed(e: AnActionEvent) {
@@ -346,10 +387,19 @@ class WordBookView {
     }
 
     private inner class ImportAction : WordBookAction(message("wordbook.window.action.import")) {
+        override fun update(e: AnActionEvent) {
+            e.presentation.isEnabled = WordBookService.isInitialized
+        }
+
         override fun doAction(e: AnActionEvent) = importWordBook(e.project)
     }
 
-    private inner class ExportAction(private val exporter: WordBookExporter) : WordBookAction(exporter.name) {
+    private inner class ExportAction(private val exporter: WordBookExporter) :
+        WordBookAction("${exporter.name}${if (exporter.availableForImport) message("wordbook.window.export.tip") else ""}") {
+        override fun update(e: AnActionEvent) {
+            e.presentation.isEnabled = WordBookService.isInitialized
+        }
+
         override fun doAction(e: AnActionEvent) = exporter.export(e.project, words)
     }
 

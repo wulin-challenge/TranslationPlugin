@@ -4,6 +4,7 @@ import cn.yiiguxing.plugin.translate.Settings
 import cn.yiiguxing.plugin.translate.SettingsChangeListener
 import cn.yiiguxing.plugin.translate.action.TranslatorAction
 import cn.yiiguxing.plugin.translate.action.TranslatorActionGroup
+import cn.yiiguxing.plugin.translate.ui.settings.TranslationEngine
 import cn.yiiguxing.plugin.translate.util.TranslateService
 import com.intellij.ide.DataManager
 import com.intellij.openapi.project.Project
@@ -25,14 +26,9 @@ import javax.swing.Icon
 class TranslatorWidget(private val project: Project) : StatusBarWidget, StatusBarWidget.IconPresentation {
 
     private var statusBar: StatusBar? = null
-    private var isInstalled: Boolean = false
-
-    init {
-        project.messageBus.connect(this).subscribeToSettingsChangeEvents()
-    }
 
     @Suppress("FunctionName")
-    override fun ID(): String = javaClass.name
+    override fun ID(): String = ID
 
     override fun getTooltipText(): String = TranslateService.translator.name
 
@@ -42,6 +38,7 @@ class TranslatorWidget(private val project: Project) : StatusBarWidget, StatusBa
 
     override fun install(statusBar: StatusBar) {
         this.statusBar = statusBar
+        project.messageBus.connect(this).subscribeToSettingsChangeEvents()
     }
 
     override fun getClickConsumer(): Consumer<MouseEvent> = Consumer {
@@ -70,14 +67,17 @@ class TranslatorWidget(private val project: Project) : StatusBarWidget, StatusBa
 
     override fun dispose() {
         statusBar = null
-        isInstalled = false
     }
 
     private fun MessageBusConnection.subscribeToSettingsChangeEvents() {
         subscribe(SettingsChangeListener.TOPIC, object : SettingsChangeListener {
-            override fun onTranslatorChanged(settings: Settings, translatorId: String) {
+            override fun onTranslatorChanged(settings: Settings, translationEngine: TranslationEngine) {
                 statusBar?.updateWidget(ID())
             }
         })
+    }
+
+    companion object {
+        val ID = "TranslatorWidget"
     }
 }

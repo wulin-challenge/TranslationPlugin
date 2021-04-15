@@ -2,11 +2,11 @@ package cn.yiiguxing.plugin.translate.trans
 
 import cn.yiiguxing.plugin.translate.GOOGLE_DOCUMENTATION_TRANSLATE_URL_FORMAT
 import cn.yiiguxing.plugin.translate.GOOGLE_TRANSLATE_URL_FORMAT
+import cn.yiiguxing.plugin.translate.ui.settings.TranslationEngine.GOOGLE
 import cn.yiiguxing.plugin.translate.util.*
 import com.google.gson.*
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.util.io.RequestBuilder
-import icons.Icons
 import java.lang.reflect.Type
 import javax.swing.Icon
 
@@ -14,10 +14,6 @@ import javax.swing.Icon
  * GoogleTranslator
  */
 object GoogleTranslator : AbstractTranslator() {
-
-    const val TRANSLATOR_ID = "translate.google"
-    private const val TRANSLATOR_NAME = "Google Translate"
-
     private val settings = Settings.googleTranslateSettings
     private val logger: Logger = Logger.getInstance(GoogleTranslator::class.java)
 
@@ -27,11 +23,15 @@ object GoogleTranslator : AbstractTranslator() {
         .registerTypeAdapter(GSentence::class.java, GSentenceDeserializer)
         .create()
 
-    override val id: String = TRANSLATOR_ID
+    override val id: String = GOOGLE.id
 
-    override val name: String = TRANSLATOR_NAME
+    override val name: String = GOOGLE.translatorName
 
-    override val icon: Icon = Icons.Google
+    override val icon: Icon = GOOGLE.icon
+
+    override val intervalLimit: Int = GOOGLE.intervalLimit
+
+    override val contentLengthLimit: Int = GOOGLE.contentLengthLimit
 
     override val primaryLanguage: Lang
         get() = settings.primaryLanguage
@@ -42,12 +42,17 @@ object GoogleTranslator : AbstractTranslator() {
     override val supportedTargetLanguages: List<Lang> =
         (Lang.sortedValues() - notSupportedLanguages - Lang.AUTO).toList()
 
-    override fun buildRequest(builder: RequestBuilder, orDocumentation: Boolean) {
+    override fun buildRequest(builder: RequestBuilder, isDocumentation: Boolean) {
         builder.userAgent().googleReferer()
     }
 
-    override fun getTranslateUrl(text: String, srcLang: Lang, targetLang: Lang, forDocumentation: Boolean): String {
-        val baseUrl = if (forDocumentation) {
+    override fun getRequestUrl(
+        text: String,
+        srcLang: Lang,
+        targetLang: Lang,
+        isDocumentation: Boolean
+    ): String {
+        val baseUrl = if (isDocumentation) {
             GOOGLE_DOCUMENTATION_TRANSLATE_URL_FORMAT
         } else {
             GOOGLE_TRANSLATE_URL_FORMAT
@@ -57,7 +62,7 @@ object GoogleTranslator : AbstractTranslator() {
             .addQueryParameter("sl", srcLang.code)
             .addQueryParameter("tl", targetLang.code)
 
-        if (forDocumentation) {
+        if (isDocumentation) {
             urlBuilder
                 .addQueryParameter("client", "te_lib")
                 .addQueryParameter("format", "html")
@@ -73,9 +78,17 @@ object GoogleTranslator : AbstractTranslator() {
 
         return urlBuilder
             .addQueryParameter("tk", text.tk())
-            .addQueryParameter("q", text)
             .build()
             .also { logger.i("Translate url: $it") }
+    }
+
+    override fun getRequestParams(
+        text: String,
+        srcLang: Lang,
+        targetLang: Lang,
+        isDocumentation: Boolean
+    ): List<Pair<String, String>> {
+        return listOf("q" to text)
     }
 
     override fun parserResult(
@@ -83,11 +96,11 @@ object GoogleTranslator : AbstractTranslator() {
         srcLang: Lang,
         targetLang: Lang,
         result: String,
-        forDocumentation: Boolean
+        isDocumentation: Boolean
     ): BaseTranslation {
         logger.i("Translate result: $result")
 
-        return if (forDocumentation) {
+        return if (isDocumentation) {
             val results = gson.fromJson(result, Array<String>::class.java)
             val sLang = if (srcLang == Lang.AUTO) Lang.valueOfCode(results[1]) else srcLang
 
@@ -114,7 +127,7 @@ object GoogleTranslator : AbstractTranslator() {
         override fun deserialize(jsonElement: JsonElement, type: Type, context: JsonDeserializationContext): GSentence {
             val jsonObject = jsonElement.asJsonObject
             return when {
-                jsonObject.has("orig") && jsonObject.has("trans") -> {
+                jsonObject.has("trans") -> {
                     context.deserialize<GTransSentence>(jsonElement, GTransSentence::class.java)
                 }
                 jsonObject.has("translit") || jsonObject.has("src_translit") -> {

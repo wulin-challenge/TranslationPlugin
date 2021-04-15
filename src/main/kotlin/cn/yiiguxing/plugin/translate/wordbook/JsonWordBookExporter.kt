@@ -11,13 +11,16 @@ class JsonWordBookExporter : WordBookExporter {
 
     override val extension: String = "json"
 
+    override val availableForImport: Boolean = true
+
     override fun export(words: List<WordBookItem>, outputStream: OutputStream) {
-        val writer = OutputStreamWriter(outputStream, Charsets.UTF_8.name())
-        GsonBuilder()
-            .registerDateTypeAdapter()
-            .setPrettyPrinting()
-            .create()
-            .toJson(words, writer)
-        writer.flush()
+        OutputStreamWriter(outputStream, Charsets.UTF_8).use { writer ->
+            GsonBuilder()
+                .registerDateTypeAdapter()
+                .setPrettyPrinting()
+                .create()
+                .toJson(words, writer)
+            writer.flush()
+        }
     }
 }
